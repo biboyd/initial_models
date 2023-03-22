@@ -27,14 +27,15 @@ constexpr int MAX_RETRY = 50;
 
 AMREX_INLINE void fopt_urca_23(eos_t& eos_state, Real& fopt, Real& r_ecap, Real& r_beta){
     burn_t burn_state;
-    rate_eval_t rate_eval;
+    rate_t rate_eval;
     
     int ine23 = network_spec_index("neon-23");
     int ina23 = network_spec_index("sodium-23");
     
     composition(eos_state);
     eos_to_burn(eos_state, burn_state);
-    evaluate_rates(burn_state, rate_eval);
+    constexpr int do_T_derivatives = 0;
+    evaluate_rates<do_T_derivatives, rate_t>(burn_state, rate_eval);
 
     r_ecap = rate_eval.screened_rates(k_na23__ne23);
     r_beta = rate_eval.screened_rates(k_ne23__na23);
@@ -76,7 +77,7 @@ AMREX_INLINE void renormalize_species(eos_t& eos_state) {
 
 AMREX_INLINE void composition_equilibrium(eos_t& eos_state){
     burn_t burn_state;
-    rate_eval_t rate_eval;
+    rate_t rate_eval;
     Real fopt;
 
     // get the species indices
@@ -99,8 +100,9 @@ AMREX_INLINE void composition_equilibrium(eos_t& eos_state){
     // independent of ye.
     composition(eos_state);
     eos_to_burn(eos_state, burn_state);
-    evaluate_rates(burn_state, rate_eval);
-
+    constexpr int do_T_derivatives = 0;
+    evaluate_rates<do_T_derivatives, rate_t>(burn_state, rate_eval);
+    
     Real r_ecap = rate_eval.screened_rates(k_na23__ne23);
     Real r_beta = rate_eval.screened_rates(k_ne23__na23);
 
@@ -134,10 +136,67 @@ AMREX_INLINE void composition_equilibrium(eos_t& eos_state){
     }
 }
 
-AMREX_INLINE void set_urca_composition(eos_t& eos_state) {
-    // Construct composition profiles
-    composition_equilibrium(eos_state);
+AMREX_INLINE void composition_tanh(eos_t& eos_state){
+    // get the species indices
+    int ic12  = network_spec_index("carbon-12");
+    int io16  = network_spec_index("oxygen-16");
+    int ine23 = network_spec_index("neon-23");
+    int ina23 = network_spec_index("sodium-23");
+
+    // Initialize mass fractions given "in" values
+    for (int i=0; i < NumSpec; ++i){
+        eos_state.xn[i] = 0.0_rt;
+    }
+
+    eos_state.xn[ic12] = c12_in;
+    eos_state.xn[io16] = o16_in;
+
+    // use 10/central density as normalization factor. found to work well experimentally.
+    eos_state.xn[ina23] =  na_ne_23/2.0_rt * (std::tanh(10.0_rt * (eos_state.rho - urca_transition_density)/dens_base) + 1.);
+    eos_state.xn[ine23] = na_ne_23 - eos_state.xn[ina23];
+
+
+}
+
+AMREX_INLINE void composition_jump(eos_t& eos_state, bool isentropic){
+    // get the species indices
+    int ic12  = network_spec_index("carbon-12");
+    int io16  = network_spec_index("oxygen-16");
+    int ine23 = network_spec_index("neon-23");
+    int ina23 = network_spec_index("sodium-23");
+
+    // Initialize mass fractions given "in" values
+    for (int i=0; i < NumSpec; ++i){
+        eos_state.xn[i] = 0.0_rt;
+    }
+
+    eos_state.xn[ic12] = c12_in;
+    eos_state.xn[io16] = o16_in;
+
+    if (isentropic){
+        eos_state.xn[ine23] = na_ne_23;
+        eos_state.xn[ina23] = 0.0_rt;
+    }
+    else{
+        eos_state.xn[ine23] = 0.0_rt;
+        eos_state.xn[ina23] = na_ne_23;
+    }
+   
+}
+
+AMREX_INLINE void set_urca_composition(eos_t& eos_state, bool isentropic) {
     
+    // Construct composition profiles
+    if (urca_transition_type == "equilibrium"){
+        composition_equilibrium(eos_state);
+    }
+    else if (urca_transition_type == "tanh"){
+        composition_tanh(eos_state);
+    }
+    else if (urca_transition_type == "jump"){
+        composition_jump(eos_state, isentropic);
+    }
+        
     // Floor species so abundances below 1E-30 are 0.0d0
     floor_species(eos_state);
 
@@ -182,7 +241,7 @@ AMREX_INLINE void iter_dens_temp(Real& dens_zone, Real& temp_zone, eos_t& eos_st
 
         eos_state.T     = temp_zone;
         eos_state.rho   = dens_zone;
-        set_urca_composition(eos_state);
+        set_urca_composition(eos_state, isentropic);
 
         // (t, rho) -> (p, s)
         eos(eos_input_rt, eos_state);
@@ -243,7 +302,7 @@ AMREX_INLINE void iter_dens_temp(Real& dens_zone, Real& temp_zone, eos_t& eos_st
             // to get pres_zone ...
             eos_state.T     = temp_zone;
             eos_state.rho   = dens_zone;
-            set_urca_composition(eos_state);
+            set_urca_composition(eos_state, isentropic);
 
             // (t, rho) -> (p, s)
             eos(eos_input_rt, eos_state);
@@ -277,7 +336,7 @@ AMREX_INLINE void iter_dens_temp(Real& dens_zone, Real& temp_zone, eos_t& eos_st
 
         eos_state.T     = temp_zone;
         eos_state.rho   = dens_zone;
-        set_urca_composition(eos_state);
+        set_urca_composition(eos_state, isentropic);
 
         // (t, rho) -> (p, s)
         eos(eos_input_rt, eos_state);
@@ -312,7 +371,7 @@ AMREX_INLINE void iter_dens_temp(Real& dens_zone, Real& temp_zone, eos_t& eos_st
             // to get pres_zone ...
             eos_state.T     = temp_zone;
             eos_state.rho   = dens_zone;
-            set_urca_composition(eos_state);
+            set_urca_composition(eos_state, isentropic);
 
             // (t, rho) -> (p, s)
             eos(eos_input_rt, eos_state);
@@ -404,6 +463,11 @@ AMREX_INLINE void init_1d() {
        amrex::Error("ERROR: na_ne_23 must be between 0 and 1");
     }
 
+    // check if using tanh urca comp that transition density is also set
+    if (urca_transition_type == "tanh" && urca_transition_density < 0.){
+        amrex::Error("ERROR: if using transition type tanh, then transition density must be set");
+    }
+
     //Initialize the temperature interior to fluff
     //(used to calculate fluff temperature for various values of fluff_type)
     Real temp_before_fluff = temp_fluff;
@@ -438,7 +502,7 @@ AMREX_INLINE void init_1d() {
     eos_t eos_state;
     eos_state.T = temp_base;
     eos_state.rho = dens_base;
-    set_urca_composition(eos_state);
+    set_urca_composition(eos_state, true); //assume we start as isentropic
     
     // (t, rho) -> (p, s)
     eos(eos_input_rt, eos_state);
@@ -514,7 +578,7 @@ AMREX_INLINE void init_1d() {
         temp_zone = model_hse(i-1, itemp);
         eos_state.rho = dens_zone;
         eos_state.T = temp_zone;
-        set_urca_composition(eos_state);
+        set_urca_composition(eos_state, isentropic);
         eos_state.p = model_hse(i-1, ipres);
         eos_state.s = entropy_want(i);
 
@@ -567,7 +631,7 @@ AMREX_INLINE void init_1d() {
 
         eos_state.T = temp_zone;
         eos_state.rho = dens_zone;
-        set_urca_composition(eos_state);
+        set_urca_composition(eos_state, isentropic);
 
         // (t, rho) -> (p, s)
         eos(eos_input_rt, eos_state);

@@ -13,6 +13,8 @@ temp_base real      6.e8
 dens_conv_zone  real -1.0
 M_conv_zone real    2.0
 
+urca_transition_type character "equilibrium"
+urca_transition_density real -1.0
 
 low_density_cutoff real 1.e-4
 temp_fluff  real      1.e7
