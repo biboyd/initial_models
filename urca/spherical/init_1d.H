@@ -152,8 +152,8 @@ AMREX_INLINE void composition_tanh(eos_t& eos_state){
     eos_state.xn[io16] = o16_in;
 
     // use 10/central density as normalization factor. found to work well experimentally.
-    eos_state.xn[ina23] =  na_ne_23/2.0_rt * (std::tanh(100.0_rt * (eos_state.rho - urca_transition_density)/dens_base) + 1.);
-    eos_state.xn[ine23] = na_ne_23 - eos_state.xn[ina23];
+    eos_state.xn[ine23] =  na_ne_23/2.0_rt * (std::tanh(100.0_rt * (eos_state.rho - urca_transition_density)/dens_base) + 1.);
+    eos_state.xn[ina23] = na_ne_23 - eos_state.xn[ine23];
 
 
 }
