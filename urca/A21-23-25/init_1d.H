@@ -24,7 +24,7 @@ constexpr Real TOL = 1.e-11_rt;
 constexpr int MAX_ITER = 1000000;
 constexpr int MAX_RETRY = 50;
 
-AMREX_INLINE void fopt_urca(eos_t& eos_state, Real& fopt, int& iecap, int& ibeta, int& k_ecap, int& k_beta, Real& r_ecap, Real& r_beta){
+AMREX_INLINE void fopt_urca(eos_t& eos_state, Real& fopt, int& iecap, int& ibeta, int k_ecap, int k_beta, Real& r_ecap, Real& r_beta){
     burn_t burn_state;
     rate_t rate_eval;
     
@@ -72,7 +72,7 @@ AMREX_INLINE void renormalize_species(eos_t& eos_state) {
 }
 
 AMREX_INLINE void newton_iteration(eos_t& eos_state, rate_t& rate_eval,
-                                   int& iecap, int& ibeta, int& k_ecap, int& k_beta, Real& totX,
+                                   int& iecap, int& ibeta, int k_ecap, int k_beta, Real& totX,
                                    Real& r_ecap, Real& r_beta){
     //Keep the mass fraction sum X(ecap) + X(beta) = totX
     // Find the A=?? mass fractions such that A=?? Urca rates are in equilibrium
@@ -103,7 +103,7 @@ AMREX_INLINE void newton_iteration(eos_t& eos_state, rate_t& rate_eval,
     }
 }
 
-AMREX_INLINE void composition_equilibrium(eos_t& eos_state, int& iecap, int& ibeta, int& k_ecap, int& k_beta, Real& totX){
+AMREX_INLINE void composition_equilibrium(eos_t& eos_state, int& iecap, int& ibeta, int k_ecap, int k_beta, Real& totX){
     burn_t burn_state;
     rate_t rate_eval;
 
@@ -175,10 +175,10 @@ AMREX_INLINE void set_urca_composition(eos_t& eos_state, bool isentropic) {
     
     // Construct A21 composition profiles
     if (urca21_transition_type == "equilibrium"){
-        composition_equilibrium(eos_state, ine21, if21, ne_f_21);
+        composition_equilibrium(eos_state, ine21, if21, k_ne21__f21, k_f21__ne21, ne_f_21);
     }
     else if (urca21_transition_type == "tanh"){
-        composition_tanh(eos_state, urca21_transition_density, ine21, if21, k_ne21__f21, k_f21__ne21, ne_f_21);
+        composition_tanh(eos_state, urca21_transition_density, ine21, if21, ne_f_21);
     }
     else if (urca21_transition_type == "jump"){
         composition_jump(eos_state, isentropic, ine21, if21, ne_f_21);
