@@ -91,6 +91,25 @@ AMREX_INLINE void fopt_urca_25(eos_t& eos_state, Real& fopt, Real& r_ecap, Real&
     fopt = xr_ecap - xr_beta;
 }
 
+AMREX_INLINE void fopt_urca(eos_t& eos_state, Real& fopt, int& iecap, int& ibeta, int& k_ecap, int& k_beta, Real& r_ecap, Real& r_beta){
+    burn_t burn_state;
+    rate_t rate_eval;
+    
+    composition(eos_state);
+    eos_to_burn(eos_state, burn_state);
+    constexpr int do_T_derivatives = 0;
+    evaluate_rates<do_T_derivatives, rate_t>(burn_state, rate_eval);
+
+    r_ecap = rate_eval.screened_rates(k_ecap);
+    r_beta = rate_eval.screened_rates(k_beta);
+
+    // calculate e-capture and beta decay rates are in equilibrium
+    Real xr_ecap = burn_state.xn[iecap] * r_ecap;
+    Real xr_beta = burn_state.xn[ibeta] * r_beta;
+
+    fopt = xr_ecap - xr_beta;
+}
+
 AMREX_INLINE void floor_species(eos_t& eos_state) {
     // Species mass fractions below 1E-30 should just be 0.0
     // This prevents getting abundances of ~1E-100. Note that
@@ -119,15 +138,15 @@ AMREX_INLINE void renormalize_species(eos_t& eos_state) {
     
 }
 
-AMREX_INLINE void newton_iteration(eos_t& eos_state, rate_t& rate_eval, Real& totX,
-                                   void (*fopt_urca)(eos_t&, Real&, Real&, Real&), 
-                                   int& iecap, int& ibeta, Real& r_ecap, Real& r_beta){
+AMREX_INLINE void newton_iteration(eos_t& eos_state, rate_t& rate_eval,
+                                   int& iecap, int& ibeta, int& k_ecap, int& k_beta, Real& totX,
+                                   Real& r_ecap, Real& r_beta){
     //Keep the mass fraction sum X(ecap) + X(beta) = totX
     // Find the A=?? mass fractions such that A=?? Urca rates are in equilibrium
     // Do Newton iterations approximating the rates as independent of mass fraction
 
     Real fopt;
-    fopt_urca(eos_state, fopt, r_ecap, r_beta);
+    fopt_urca(eos_state, fopt, iecap, ibeta, k_ecap, k_beta, r_ecap, r_beta);
 
     Real rate_equilibrium_tol = 1.0e-10;
     int max_equilibrium_iters = 10000;
@@ -137,11 +156,11 @@ AMREX_INLINE void newton_iteration(eos_t& eos_state, rate_t& rate_eval, Real& to
         if (fopt > 0.0_rt) {
             eos_state.xn[iecap] = eos_state.xn[iecap] + dx;
             eos_state.xn[ibeta] = totX - eos_state.xn[iecap];
-            fopt_urca(eos_state, fopt, r_ecap, r_beta);
+            fopt_urca(eos_state, fopt, iecap, ibeta, k_ecap, k_beta, r_ecap, r_beta);
         } else {
             eos_state.xn[ibeta] = eos_state.xn[ibeta] - dx;
             eos_state.xn[iecap] = totX - eos_state.xn[ibeta];
-            fopt_urca(eos_state, fopt, r_ecap, r_beta);
+            fopt_urca(eos_state, fopt, iecap, ibeta, k_ecap, k_beta, r_ecap, r_beta);
         }
         j++;
     }
@@ -151,34 +170,13 @@ AMREX_INLINE void newton_iteration(eos_t& eos_state, rate_t& rate_eval, Real& to
     }
 }
 
-AMREX_INLINE void composition_equilibrium(eos_t& eos_state){
+AMREX_INLINE void composition_equilibrium(eos_t& eos_state, int& iecap, int& ibeta, int& k_ecap, int& k_beta, Real& totX){
     burn_t burn_state;
     rate_t rate_eval;
 
-    // get the species indices
-    int ic12  = network_spec_index("carbon-12");
-    int io16  = network_spec_index("oxygen-16");
-    int if21 = network_spec_index("fluorine-21");
-    int ine21 = network_spec_index("neon-21");
-    int ine23 = network_spec_index("neon-23");
-    int ina23 = network_spec_index("sodium-23");
-    int ina25 = network_spec_index("sodium-25");
-    int img25 = network_spec_index("magnesium-25");
-
-    // Initialize mass fractions given "in" values
-    for (int i=0; i < NumSpec; ++i){
-        eos_state.xn[i] = 0.0_rt;
-    }
-
-    eos_state.xn[ic12] = c12_in;
-    eos_state.xn[io16] = o16_in;
-    eos_state.xn[if21] = 0.5_rt * ne_f_21;
-    eos_state.xn[ine21] = 0.5_rt * ne_f_21;
-    eos_state.xn[ine23] = 0.5_rt * na_ne_23;
-    eos_state.xn[ina23] = 0.5_rt * na_ne_23;
-    eos_state.xn[ina25] = 0.5_rt * mg_na_25;
-    eos_state.xn[img25] = 0.5_rt * mg_na_25;
-
+    eos_state.xn[ibeta] = 0.5_rt * totX;
+    eos_state.xn[iecap] = 0.5_rt * totX;
+    
     // Estimate the mass fractions approximating the rates as
     // independent of ye.
     composition(eos_state);
@@ -189,114 +187,90 @@ AMREX_INLINE void composition_equilibrium(eos_t& eos_state){
     Real r_ecap, r_beta;
 
     // init A=21
-    r_ecap = rate_eval.screened_rates(k_ne21__f21);
-    r_beta = rate_eval.screened_rates(k_f21__ne21);
+    r_ecap = rate_eval.screened_rates(k_ecap);
+    r_beta = rate_eval.screened_rates(k_beta);
 
-    eos_state.xn[if21] = ne_f_21/(1.0_rt + r_beta/r_ecap);
-    eos_state.xn[ine21] = ne_f_21 - eos_state.xn[if21];
-    newton_iteration(eos_state, rate_eval, ne_f_21, 
-                     &fopt_urca_21, ine21, if21, r_ecap, r_beta);
+    eos_state.xn[ibeta] = totX/(1.0_rt + r_beta/r_ecap);
+    eos_state.xn[iecap] = totX - eos_state.xn[ibeta];
+    newton_iteration(eos_state, rate_eval,
+                     iecap, ibeta, k_ecap, k_beta, totX, r_ecap, r_beta);
 
-    // init A=23
-    r_ecap = rate_eval.screened_rates(k_na23__ne23);
-    r_beta = rate_eval.screened_rates(k_ne23__na23);
-
-    eos_state.xn[ine23] = na_ne_23/(1.0_rt + r_beta/r_ecap);
-    eos_state.xn[ina23] = na_ne_23 - eos_state.xn[ine23];
-    newton_iteration(eos_state, rate_eval, na_ne_23, 
-                     &fopt_urca_23, ina23, ine23, r_ecap, r_beta);
-
-    // init A=25
-    r_ecap = rate_eval.screened_rates(k_mg25__na25);
-    r_beta = rate_eval.screened_rates(k_na25__mg25);
-
-    eos_state.xn[ina25] = mg_na_25/(1.0_rt + r_beta/r_ecap);
-    eos_state.xn[img25] = mg_na_25 - eos_state.xn[ina25];
-    newton_iteration(eos_state, rate_eval, mg_na_25, 
-                     &fopt_urca_25, img25, ina25, r_ecap, r_beta);
-
-    
 }
 
-AMREX_INLINE void composition_tanh(eos_t& eos_state){
-    // get the species indices
-    int ic12  = network_spec_index("carbon-12");
-    int io16  = network_spec_index("oxygen-16");
-    int if21 = network_spec_index("fluorine-21");
-    int ine21 = network_spec_index("neon-21");
-    int ine23 = network_spec_index("neon-23");
-    int ina23 = network_spec_index("sodium-23");
-    int ina25 = network_spec_index("sodium-25");
-    int img25 = network_spec_index("magnesium-25");
+AMREX_INLINE void composition_tanh(eos_t& eos_state, Real& transition_rho, int& iecap, int& ibeta, Real& totX, Real urca_transition_norm = 100_rt){
+ 
+    // use 100/central density as normalization factor kappa. found to work well experimentally.
+    Real kappa = urca_transition_norm/dens_base;
 
-    // Initialize mass fractions given "in" values
-    for (int i=0; i < NumSpec; ++i){
-        eos_state.xn[i] = 0.0_rt;
-    }
+    eos_state.xn[ibeta] =  totX/2.0_rt * (std::tanh(kappa * (eos_state.rho - transition_rho)) + 1.);
+    eos_state.xn[iecap] = totX - eos_state.xn[ibeta];
 
-    eos_state.xn[ic12] = c12_in;
-    eos_state.xn[io16] = o16_in;
-
-    // use 10/central density as normalization factor. found to work well experimentally.
-    eos_state.xn[if21] =  ne_f_21/2.0_rt * (std::tanh(100.0_rt * (eos_state.rho - urca_transition_density)/dens_base) + 1.);
-    eos_state.xn[ine21] = ne_f_21 - eos_state.xn[if21];
-
-    eos_state.xn[ine23] =  na_ne_23/2.0_rt * (std::tanh(100.0_rt * (eos_state.rho - urca_transition_density)/dens_base) + 1.);
-    eos_state.xn[ina23] = na_ne_23 - eos_state.xn[ine23];
-
-    eos_state.xn[ina25] =  mg_na_25/2.0_rt * (std::tanh(100.0_rt * (eos_state.rho - urca_transition_density)/dens_base) + 1.);
-    eos_state.xn[img25] = mg_na_25 - eos_state.xn[ina25];
 }
 
-AMREX_INLINE void composition_jump(eos_t& eos_state, bool isentropic){
-    // get the species indices
-    int ic12  = network_spec_index("carbon-12");
-    int io16  = network_spec_index("oxygen-16");
-    int if21 = network_spec_index("fluorine-21");
-    int ine21 = network_spec_index("neon-21");
-    int ine23 = network_spec_index("neon-23");
-    int ina23 = network_spec_index("sodium-23");
-    int ina25 = network_spec_index("sodium-25");
-    int img25 = network_spec_index("magnesium-25");
-
-    // Initialize mass fractions given "in" values
-    for (int i=0; i < NumSpec; ++i){
-        eos_state.xn[i] = 0.0_rt;
-    }
-
-    eos_state.xn[ic12] = c12_in;
-    eos_state.xn[io16] = o16_in;
-
+AMREX_INLINE void composition_jump(eos_t& eos_state, bool isentropic, int& iecap, int& ibeta, Real& totX){
+    // if isentropic, all beta Urca nuclei
     if (isentropic){
-        eos_state.xn[if21] = ne_f_21;
-        eos_state.xn[ine21] = 0.0_rt;
-        eos_state.xn[ine23] = na_ne_23;
-        eos_state.xn[ina23] = 0.0_rt;
-        eos_state.xn[ina25] = mg_na_25;
-        eos_state.xn[img25] = 0.0_rt;
+        eos_state.xn[ibeta] = totX;
+        eos_state.xn[iecap] = 0.0_rt;
     }
     else{
-        eos_state.xn[if21] = 0.0_rt;
-        eos_state.xn[ine21] = ne_f_21;
-        eos_state.xn[ine23] = 0.0_rt;
-        eos_state.xn[ina23] = na_ne_23;
-        eos_state.xn[ina25] = 0.0_rt;
-        eos_state.xn[img25] = mg_na_25;
+        eos_state.xn[ibeta] = 0.0_rt;
+        eos_state.xn[iecap] = totX;
     }
    
 }
 
 AMREX_INLINE void set_urca_composition(eos_t& eos_state, bool isentropic) {
+    // get the species indices
+    int ic12  = network_spec_index("carbon-12");
+    int io16  = network_spec_index("oxygen-16");
+    int if21 = network_spec_index("fluorine-21");
+    int ine21 = network_spec_index("neon-21");
+    int ine23 = network_spec_index("neon-23");
+    int ina23 = network_spec_index("sodium-23");
+    int ina25 = network_spec_index("sodium-25");
+    int img25 = network_spec_index("magnesium-25");
+
+    // Initialize mass fractions zeros
+    for (int i=0; i < NumSpec; ++i){
+        eos_state.xn[i] = 0.0_rt;
+    }
+
+    //set c and o
+    eos_state.xn[ic12] = c12_in;
+    eos_state.xn[io16] = o16_in;
     
-    // Construct composition profiles
-    if (urca_transition_type == "equilibrium"){
-        composition_equilibrium(eos_state);
+    // Construct A21 composition profiles
+    if (urca21_transition_type == "equilibrium"){
+        composition_equilibrium(eos_state, ine21, if21, ne_f_21);
     }
-    else if (urca_transition_type == "tanh"){
-        composition_tanh(eos_state);
+    else if (urca21_transition_type == "tanh"){
+        composition_tanh(eos_state, urca21_transition_density, ine21, if21, k_ne21__f21, k_f21__ne21, ne_f_21);
     }
-    else if (urca_transition_type == "jump"){
-        composition_jump(eos_state, isentropic);
+    else if (urca21_transition_type == "jump"){
+        composition_jump(eos_state, isentropic, ine21, if21, ne_f_21);
+    }
+    
+    // Construct A23 composition profiles
+    if (urca23_transition_type == "equilibrium"){
+        composition_equilibrium(eos_state, ina23, ine23, k_na23__ne23, k_ne23__na23, na_ne_23);
+    }
+    else if (urca23_transition_type == "tanh"){
+        composition_tanh(eos_state, urca23_transition_density, ina23, ine23, na_ne_23);
+    }
+    else if (urca23_transition_type == "jump"){
+        composition_jump(eos_state, isentropic, ina23, ine23, na_ne_23);
+    }
+
+    // Construct A25 composition profiles
+    if (urca25_transition_type == "equilibrium"){
+        composition_equilibrium(eos_state, img25, ina25, k_mg25__na25, k_na25__mg25, mg_na_25);
+    }
+    else if (urca25_transition_type == "tanh"){
+        composition_tanh(eos_state, urca25_transition_density, img25, ina25, mg_na_25);
+    }
+    else if (urca25_transition_type == "jump"){
+        composition_jump(eos_state, isentropic, img25, ina25, mg_na_25);
     }
         
     // Floor species so abundances below 1E-30 are 0.0d0
@@ -576,7 +550,13 @@ AMREX_INLINE void init_1d() {
     }
 
     // check if using tanh urca comp that transition density is also set
-    if (urca_transition_type == "tanh" && urca_transition_density < 0.){
+    if (urca21_transition_type == "tanh" && urca21_transition_density < 0.){
+        amrex::Error("ERROR: if using transition type tanh, then transition density must be set");
+    }
+    if (urca23_transition_type == "tanh" && urca23_transition_density < 0.){
+        amrex::Error("ERROR: if using transition type tanh, then transition density must be set");
+    }
+    if (urca25_transition_type == "tanh" && urca25_transition_density < 0.){
         amrex::Error("ERROR: if using transition type tanh, then transition density must be set");
     }
 
