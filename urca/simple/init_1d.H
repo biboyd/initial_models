@@ -724,5 +724,6 @@ AMREX_INLINE void init_1d() {
     std::cout << "convective zone boundary density (g/cm^3) = " << model_hse(i_conv, idens) << std::endl;
     std::cout << "convective zone boundary radius (cm) = " << xzn_hse(i_conv) << std::endl;
     std::cout << "convective zone boundary index = " << i_conv << std::endl;
+    std::cout << "Temperature outside convective zone = " << model_hse(i_conv, itemp) << std::endl;
 }
 #endif
