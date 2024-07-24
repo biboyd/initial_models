@@ -170,7 +170,7 @@ AMREX_INLINE void composition_jump(eos_t& eos_state, bool isentropic){
         eos_state.xn[i] = 0.0_rt;
     }
 
-    eos_state.xn[ic12] = probelm_rp::c12_in;
+    eos_state.xn[ic12] = problem_rp::c12_in;
     eos_state.xn[io16] = problem_rp::o16_in;
 
     if (isentropic){
