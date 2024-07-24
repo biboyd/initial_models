@@ -22,7 +22,7 @@ EBASE := initialmodel
 EOS_DIR := helmholtz
 
 NETWORK_TOP_DIR := $(MICROPHYSICS_HOME)/networks
-NETWORK_DIR := ignition_reaclib/URCA-21-23-25
+NETWORK_DIR := ignition_reaclib/URCA-A21-23-25
 
 Bpack := ./Make.package
 Blocs := . ../..

@@ -17,7 +17,7 @@
 #include <model_util.H>
 
 using namespace amrex;
-
+using namespace problem_rp;
 
 constexpr Real TOL = 1.e-11_rt;
 
@@ -175,10 +175,14 @@ AMREX_INLINE void set_urca_composition(eos_t& eos_state, bool isentropic) {
     
     // Construct A21 composition profiles
     if (urca21_transition_type == "equilibrium"){
-        composition_equilibrium(eos_state, ine21, if21, k_ne21__f21, k_f21__ne21, ne_f_21);
+        composition_equilibrium(eos_state, ine21, if21, 
+                                Rates::k_Ne21_to_F21, 
+                                Rates::k_F21_to_Ne21, 
+                                ne_f_21);
     }
     else if (urca21_transition_type == "tanh"){
-        composition_tanh(eos_state, urca21_transition_density, ine21, if21, ne_f_21);
+        composition_tanh(eos_state, urca21_transition_density, 
+                         ine21, if21, ne_f_21);
     }
     else if (urca21_transition_type == "jump"){
         composition_jump(eos_state, isentropic, ine21, if21, ne_f_21);
@@ -186,10 +190,14 @@ AMREX_INLINE void set_urca_composition(eos_t& eos_state, bool isentropic) {
     
     // Construct A23 composition profiles
     if (urca23_transition_type == "equilibrium"){
-        composition_equilibrium(eos_state, ina23, ine23, k_na23__ne23, k_ne23__na23, na_ne_23);
+        composition_equilibrium(eos_state, ina23, ine23, 
+                                Rates::k_Na23_to_Ne23, 
+                                Rates::k_Ne23_to_Na23, 
+                                na_ne_23);
     }
     else if (urca23_transition_type == "tanh"){
-        composition_tanh(eos_state, urca23_transition_density, ina23, ine23, na_ne_23);
+        composition_tanh(eos_state, urca23_transition_density, 
+                         ina23, ine23, na_ne_23);
     }
     else if (urca23_transition_type == "jump"){
         composition_jump(eos_state, isentropic, ina23, ine23, na_ne_23);
@@ -197,10 +205,14 @@ AMREX_INLINE void set_urca_composition(eos_t& eos_state, bool isentropic) {
 
     // Construct A25 composition profiles
     if (urca25_transition_type == "equilibrium"){
-        composition_equilibrium(eos_state, img25, ina25, k_mg25__na25, k_na25__mg25, mg_na_25);
+        composition_equilibrium(eos_state, img25, ina25, 
+                                Rates::k_Mg25_to_Na25, 
+                                Rates::k_Na25_to_Mg25, 
+                                mg_na_25);
     }
     else if (urca25_transition_type == "tanh"){
-        composition_tanh(eos_state, urca25_transition_density, img25, ina25, mg_na_25);
+        composition_tanh(eos_state, urca25_transition_density, 
+                         img25, ina25, mg_na_25);
     }
     else if (urca25_transition_type == "jump"){
         composition_jump(eos_state, isentropic, img25, ina25, mg_na_25);

@@ -27,6 +27,8 @@
 
 #include <init_1d.H>
 
+using namespace problem_rp;
+
 std::string inputs_name = "";
 
 int
