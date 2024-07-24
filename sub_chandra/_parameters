@@ -1,13 +1,17 @@
 @namespace: problem
 
-nx                   integer      1280
-
 M_tot                real         0.6
 
 M_He                 real         0.2
 
 # mass fraction of N14 to put in the accreted envelope
 X_N14                real         0.00
+
+# mass fraction of C12 to put in the accreted envelope
+X_C12                real         0.00
+
+# mass fraction of O16 to put in the accreted envelope
+X_O16                real         0.00
 
 delta                real         1.e-6
 
@@ -19,9 +23,19 @@ temp_core            real         1.e7
 
 temp_base            real         4.e8
 
-mixed_co_wd          logical      .true.
+mixed_co_wd          int          1
 
 low_density_cutoff   real         1.e-4
 
 temp_fluff           real         1.e5
 
+isothermal_layer     int          0
+
+# tol_hse is the tolerance used when iterating over a zone to
+# force it into HSE by adjusting the current density (and
+# possibly temperature).  TOL_HSE should be very small (~
+# 1.e-10).
+tol_hse              real         1.e-10
+
+# prefix for the output
+prefix               character    "sub_chandra"

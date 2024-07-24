@@ -12,7 +12,8 @@ USE_MPI = FALSE
 USE_OMP = FALSE
 
 USE_REACT = TRUE
-USE_CXX_EOS = TRUE
+
+BL_NO_FORT = TRUE
 
 MAX_ZONES := 16384
 
@@ -28,7 +29,7 @@ NETWORK_DIR := general_null
 NETWORK_INPUTS := ignition.net
 
 Bpack := ./Make.package
-Blocs := .
+Blocs := . ..
 
 EXTERN_SEARCH += . ..
 

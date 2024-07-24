@@ -1,0 +1,5 @@
+@namespace: problem
+
+xmin             real            0.0
+
+xmax             real            2.5e8

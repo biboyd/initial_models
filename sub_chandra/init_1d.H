@@ -9,6 +9,8 @@
 #include <extern_parameters.H>
 #include <fundamental_constants.H>
 
+#include <coord_info.H>
+#include <read_model.H>
 #include <model_util.H>
 
 using namespace amrex;
@@ -18,21 +20,6 @@ using namespace amrex;
 // with an isentropic He envelope on the surface.
 
 AMREX_INLINE void init_1d() {
-
-    // define convenient indices for the scalars
-
-    const int nvar = 3 + NumSpec;
-    const int idens = 0;
-    const int itemp = 1;
-    const int ipres = 2;
-    const int ispec = 3;
-
-    // TOL_HSE is the tolerance used when iterating over a zone to
-    // force it into HSE by adjusting the current density (and
-    // possibly temperature).  TOL_HSE should be very small (~
-    // 1.e-10).
-
-    const Real TOL_HSE = 1.e-10_rt;
 
     // TOL_WD_MASS is tolerance used for getting the total WD mass
     // equal to M_tot (defined below).  It can be reasonably small,
@@ -48,16 +35,13 @@ AMREX_INLINE void init_1d() {
 
     const Real TOL_HE_MASS = 1.e-3_rt;
 
-    const int MAX_ITER = 250;
-
-    const Real smallx = 1.e-10_rt;
-
+    const int MAX_ITER = 1000;
 
 
     // convert the envelope and WD mass into CGS
 
-    M_tot *= C::M_solar;
-    M_He *= C::M_solar;
+    problem_rp::M_tot *= C::M_solar;
+    problem_rp::M_He *= C::M_solar;
 
     // get the species indices
 
@@ -71,32 +55,39 @@ AMREX_INLINE void init_1d() {
         amrex::Error("ERROR: species not defined");
     }
 
-    if (in14 < 0 && X_N14 > 0.0_rt) {
+    if (in14 < 0 && problem_rp::X_N14 > 0.0_rt) {
         amrex::Error("ERROR: N14 not defined");
     }
 
-    Real xn_core[NumSpec] = {smallx};
-    Real xn_he[NumSpec] = {smallx};;
+    Real xn_core[NumSpec] = {network_rp::small_x};
+    Real xn_he[NumSpec] = {network_rp::small_x};;
 
-    if (mixed_co_wd) {
-        xn_core[ic12] = 0.5_rt - 0.5_rt * (NumSpec - 1) * smallx;
-        xn_core[io16] = 0.5_rt - 0.5_rt * (NumSpec - 1) * smallx;
+    if (problem_rp::mixed_co_wd) {
+        xn_core[ic12] = 0.5_rt - 0.5_rt * (NumSpec - 1) * network_rp::small_x;
+        xn_core[io16] = 0.5_rt - 0.5_rt * (NumSpec - 1) * network_rp::small_x;
     } else {
-        xn_core[ic12] = 1.0_rt - (NumSpec - 1) * smallx;
+        xn_core[ic12] = 1.0_rt - (NumSpec - 1) * network_rp::small_x;
     }
 
-    if (X_N14 > 0.0_rt) {
-        xn_he[in14] = X_N14;
-        xn_he[ihe4] = 1.0_rt - (NumSpec - 2) * smallx - X_N14;
-    } else {
-        xn_he[ihe4] = 1.0_rt - (NumSpec - 1) * smallx;
+    if (problem_rp::X_N14 > 0.0_rt) {
+        xn_he[in14] = problem_rp::X_N14;
     }
+
+    if (problem_rp::X_C12 > 0.0_rt) {
+        xn_he[ic12] = problem_rp::X_C12;
+    }
+
+    if (problem_rp::X_O16 > 0.0_rt) {
+        xn_he[io16] = problem_rp::X_O16;
+    }
+
+    xn_he[ihe4] = 1.0_rt - xn_he[ic12] - xn_he[in14] - xn_he[io16] - (NumSpec-4) * network_rp::small_x;
 
     // Create a 1-d uniform grid that is identical to the mesh that we
     // are mapping onto, and then we want to force it into HSE on that
     // mesh.
 
-    if (nx > NPTS_MODEL) {
+    if (problem_rp::nx > NPTS_MODEL) {
         amrex::Error("too many zones requested -- increase NPTS_MODEL");
     }
 
@@ -104,7 +95,7 @@ AMREX_INLINE void init_1d() {
     Array1D<Real, 0, NPTS_MODEL-1> xznl;
     Array1D<Real, 0, NPTS_MODEL-1> xznr;
 
-    Array2D<Real, 0, NPTS_MODEL-1, 0, nvar-1> model_hse;
+    Array2D<Real, 0, NPTS_MODEL-1, 0, model::nvar-1> model_hse;
 
     Array1D<Real, 0, NPTS_MODEL-1> M_enclosed;
     Array1D<Real, 0, NPTS_MODEL-1> cs_hse;
@@ -112,13 +103,7 @@ AMREX_INLINE void init_1d() {
 
     // compute the coordinates of the new gridded function
 
-    Real dCoord = (xmax - xmin) / static_cast<Real>(nx);
-
-    for (int i = 0; i < nx; ++i) {
-        xznl(i) = xmin + static_cast<Real>(i) * dCoord;
-        xznr(i) = xmin + (static_cast<Real>(i) + 1.0_rt) * dCoord;
-        xzn_hse(i) = 0.5_rt * (xznl(i) + xznr(i));
-    }
+    fill_coord_arrays(xzn_hse, xznl, xznr);
 
     // We don't know what WD central density will give the desired
     // total mass, so we need to iterate over central density
@@ -132,7 +117,7 @@ AMREX_INLINE void init_1d() {
     Real rho_c = 1.e9_rt;  // 1.e9 is a reasonable starting WD central density
 
     // rho_he_old is the old guess for the density to transition to He,
-    // where we will be isentropic, and rho_he is the currrent guess.
+    // where we will be isentropic, and rho_he is the current guess.
 
     Real rho_he_old = -1.0_rt;
     Real rho_he = 0.5_rt * rho_c;
@@ -150,7 +135,7 @@ AMREX_INLINE void init_1d() {
 
     for (int iter_mass = 0; iter_mass < MAX_ITER; ++iter_mass) {
 
-        std::cout << "mass iter = " << iter_mass << " " << rho_c << " " << temp_core << std::endl;
+        std::cout << "mass iter = " << iter_mass << " " << rho_c << " " << problem_rp::temp_core << std::endl;
 
         bool fluff = false;
 
@@ -158,7 +143,7 @@ AMREX_INLINE void init_1d() {
         // Initialize the central conditions.
 
         eos_t eos_state;
-        eos_state.T = temp_core;
+        eos_state.T = problem_rp::temp_core;
         eos_state.rho = rho_c;
         for (int n = 0; n < NumSpec; ++n) {
             eos_state.xn[n] = xn_core[n];
@@ -170,16 +155,16 @@ AMREX_INLINE void init_1d() {
 
         // make the initial guess be completely uniform
 
-        for (int i = 0; i < nx; ++i) {
-            model_hse(i,idens) = eos_state.rho;
-            model_hse(i,itemp) = eos_state.T;
-            model_hse(i,ipres) = eos_state.p;
+        for (int i = 0; i < problem_rp::nx; ++i) {
+            model_hse(i, model::idens) = eos_state.rho;
+            model_hse(i, model::itemp) = eos_state.T;
+            model_hse(i, model::ipres) = eos_state.p;
 
             cs_hse(i) = eos_state.cs;
             s_hse(i) = eos_state.s;
 
             for (int n = 0; n < NumSpec; ++n) {
-                model_hse(i,ispec+n) = eos_state.xn[n];
+                model_hse(i, model::ispec+n) = eos_state.xn[n];
             }
         }
 
@@ -187,7 +172,7 @@ AMREX_INLINE void init_1d() {
         // keep track of the mass enclosed below the current zone
 
         M_enclosed(0) = (4.0_rt / 3.0_rt) * M_PI *
-            (std::pow(xznr(0), 3) - std::pow(xznl(0), 3)) * model_hse(0,idens);
+            (std::pow(xznr(0), 3) - std::pow(xznl(0), 3)) * model_hse(0, model::idens);
 
         ihe_layer = -1;
         ihe_entropy = -1;
@@ -205,14 +190,14 @@ AMREX_INLINE void init_1d() {
         Real entropy;
         Real xn[NumSpec];
 
-        for (int i = 1; i < nx; ++i) {
+        for (int i = 1; i < problem_rp::nx; ++i) {
 
             // as the initial guess for the density, use the previous zone
 
-            dens_zone = model_hse(i-1, idens);
+            dens_zone = model_hse(i-1, model::idens);
 
             if (dens_zone > rho_he) {
-                temp_zone = temp_core;
+                temp_zone = problem_rp::temp_core;
                 for (int n = 0; n < NumSpec; ++n) {
                     xn[n] = xn_core[n];
                 }
@@ -235,7 +220,7 @@ AMREX_INLINE void init_1d() {
                 // shifting the profile by FOUR*delta doesn't affect
                 // the overall mass.
 
-                Real test = 0.5_rt * (1.0_rt + std::tanh((xzn_hse(i) - xzn_hse(ihe_layer) - 4.0_rt * delta) / delta));
+                Real test = 0.5_rt * (1.0_rt + std::tanh((xzn_hse(i) - xzn_hse(ihe_layer) - 4.0_rt * problem_rp::delta) / problem_rp::delta));
 
                 if (test < 0.999_rt) {
 
@@ -243,25 +228,31 @@ AMREX_INLINE void init_1d() {
 
                     for (int n = 0; n < NumSpec; ++n) {
                         xn[n] = xn_core[n] + 0.5_rt * (xn_he[n] - xn_core[n]) *
-                            (1.0_rt + std::tanh((xzn_hse(i) - xzn_hse(ihe_layer) - 4.0_rt * delta) / delta));
+                            (1.0_rt + std::tanh((xzn_hse(i) - xzn_hse(ihe_layer) - 4.0_rt * problem_rp::delta) / problem_rp::delta));
                     }
 
-                    temp_zone = temp_core + 0.5_rt * (temp_base - temp_core)*
-                        (1.0_rt + std::tanh((xzn_hse(i) - xzn_hse(ihe_layer) - 4.0_rt * delta) / delta));
+                    temp_zone = problem_rp::temp_core + 0.5_rt * (problem_rp::temp_base - problem_rp::temp_core)*
+                        (1.0_rt + std::tanh((xzn_hse(i) - xzn_hse(ihe_layer) - 4.0_rt * problem_rp::delta) / problem_rp::delta));
 
                     isentropic = false;
 
                 } else {
 
-                    // fully isentropic
-
-                    if (ihe_entropy == -1) {
-                        ihe_entropy = i;
-                        temp_zone = temp_base;
+                    if (problem_rp::isothermal_layer) {
+                        // isothermal He layer no matter what
+                        temp_zone = problem_rp::temp_base;
                         isentropic = false;
                     } else {
-                        temp_zone = model_hse(i-1, itemp);
-                        isentropic = true;
+                        // fully isentropic
+
+                        if (ihe_entropy == -1) {
+                            ihe_entropy = i;
+                            temp_zone = problem_rp::temp_base;
+                            isentropic = false;
+                        } else {
+                            temp_zone = model_hse(i-1, model::itemp);
+                            isentropic = true;
+                        }
                     }
 
                     for (int n = 0; n < NumSpec; ++n) {
@@ -290,8 +281,8 @@ AMREX_INLINE void init_1d() {
 
                     if (isentropic) {
 
-                        p_want = model_hse(i-1, ipres) +
-                            delx * 0.5_rt * (dens_zone + model_hse(i-1, idens)) * g_zone;
+                        p_want = model_hse(i-1, model::ipres) +
+                            delx * 0.5_rt * (dens_zone + model_hse(i-1, model::idens)) * g_zone;
 
                         // now we have two functions to zero:
                         //   A = p_want - p(rho,T)
@@ -341,18 +332,18 @@ AMREX_INLINE void init_1d() {
                         // check if the density falls below our minimum
                         // cut-off -- if so, floor it
 
-                        if (dens_zone < low_density_cutoff) {
+                        if (dens_zone < problem_rp::low_density_cutoff) {
 
-                            dens_zone = low_density_cutoff;
-                            temp_zone = temp_fluff;
+                            dens_zone = problem_rp::low_density_cutoff;
+                            temp_zone = problem_rp::temp_fluff;
                             converged_hse = true;
                             fluff = true;
                             break;
 
                         }
 
-                        if (std::abs(drho) < TOL_HSE * dens_zone &&
-                            std::abs(dtemp) < TOL_HSE * temp_zone) {
+                        if (std::abs(drho) < problem_rp::tol_hse * dens_zone &&
+                            std::abs(dtemp) < problem_rp::tol_hse * temp_zone) {
                             converged_hse = true;
                             break;
                         }
@@ -367,8 +358,8 @@ AMREX_INLINE void init_1d() {
                         // between the current zone and the one just
                         // inside.
 
-                        p_want = model_hse(i-1, ipres) +
-                            delx * 0.5_rt * (dens_zone + model_hse(i-1, idens)) * g_zone;
+                        p_want = model_hse(i-1, model::ipres) +
+                            delx * 0.5_rt * (dens_zone + model_hse(i-1, model::idens)) * g_zone;
 
                         eos_state.T = temp_zone;
                         eos_state.rho = dens_zone;
@@ -391,24 +382,24 @@ AMREX_INLINE void init_1d() {
                             amrex::max(0.9_rt * dens_zone,
                                        amrex::min(dens_zone + drho, 1.1_rt * dens_zone));
 
-                        if (std::abs(drho) < TOL_HSE * dens_zone) {
+                        if (std::abs(drho) < problem_rp::tol_hse * dens_zone) {
                             converged_hse = true;
                             break;
                         }
 
-                        if (dens_zone < low_density_cutoff) {
+                        if (dens_zone < problem_rp::low_density_cutoff) {
 
                             icutoff = i;
-                            dens_zone = low_density_cutoff;
-                            temp_zone = temp_fluff;
+                            dens_zone = problem_rp::low_density_cutoff;
+                            temp_zone = problem_rp::temp_fluff;
                             converged_hse = true;
                             fluff = true;
                             break;
                         }
                     }
 
-                    if (temp_zone < temp_fluff && isentropic) {
-                        temp_zone = temp_fluff;
+                    if (temp_zone < problem_rp::temp_fluff && isentropic) {
+                        temp_zone = problem_rp::temp_fluff;
                         isentropic = false;
                     }
 
@@ -419,15 +410,15 @@ AMREX_INLINE void init_1d() {
 
                     std::cout << "Error zone " << i <<  " did not converge in init_1d" << std::endl;
                     std::cout << dens_zone << " " << temp_zone << std::endl;
-                    std::cout << p_want;
-                    std::cout << drho;
+                    std::cout << p_want << std::endl;
+                    std::cout << drho << std::endl;
                     amrex::Error("Error: HSE non-convergence");
                 }
 
             } else {
                 // fluff region
-                dens_zone = low_density_cutoff;
-                temp_zone = temp_fluff;
+                dens_zone = problem_rp::low_density_cutoff;
+                temp_zone = problem_rp::temp_fluff;
             }
 
             // call the EOS one more time for this zone and then go on
@@ -454,54 +445,73 @@ AMREX_INLINE void init_1d() {
 
             // update the thermodynamics in this zone
 
-            model_hse(i, idens) = dens_zone;
-            model_hse(i, itemp) = temp_zone;
-            model_hse(i, ipres) = pres_zone;
+            model_hse(i, model::idens) = dens_zone;
+            model_hse(i, model::itemp) = temp_zone;
+            model_hse(i, model::ipres) = pres_zone;
 
             for (int n = 0; n < NumSpec; ++n) {
-                model_hse(i, ispec+n) = xn[n];
+                model_hse(i, model::ispec+n) = xn[n];
             }
 
             M_enclosed(i) = M_enclosed(i-1) +
                 (4.0_rt / 3.0_rt) * M_PI * (xznr(i) - xznl(i)) *
-                (std::pow(xznr(i), 2) + xznl(i) * xznr(i) + std::pow(xznl(i), 2)) * model_hse(i, idens);
+                (std::pow(xznr(i), 2) + xznl(i) * xznr(i) + std::pow(xznl(i), 2)) * model_hse(i, model::idens);
 
             cs_hse(i) = eos_state.cs;
             s_hse(i) = eos_state.s;
 
         } // end loop over zones
 
+        mass_he = 0.0;
+        mass_wd = 0.0;
 
-        // compute the total mass of the He layer and C/O WD
+        // it might be that we never reach the cutoff density in our
+        // domain.  This is especially the case if we do an isothermal
+        // model.  Make sure we integrate over everything in that
+        // case.
+        int max_index = icutoff == -1 ? problem_rp::nx : icutoff;
 
-        Real zone_X = model_hse(0, ispec+ihe4);
-        if (in14 > 0) {
-            zone_X += model_hse(0, ispec+in14);
-        }
+        for (int i = 0; i < max_index; ++i) {
 
-        mass_he = (4.0_rt / 3.0_rt) * M_PI *
-            (std::pow(xznr(0), 3) - std::pow(xznl(0), 3)) *
-            model_hse(0, idens) * zone_X;
-
-        mass_wd = (4.0_rt / 3.0_rt) * M_PI *
-            (std::pow(xznr(0), 3) - std::pow(xznl(0), 3)) *
-            model_hse(0, idens) * (model_hse(0, ispec+ic12) + model_hse(0, ispec+io16));
-
-        for (int i = 1; i < icutoff; ++i) {
-            zone_X = model_hse(i, ispec+ihe4);
-            if (in14 > 0) {
-                zone_X += model_hse(i, ispec+in14);
+            Real vol{0.0};
+            if (i == 0) {
+                vol = (4.0_rt / 3.0_rt) * M_PI * (std::pow(xznr(0), 3) - std::pow(xznl(0), 3));
+            } else {
+                vol = (4.0_rt / 3.0_rt) * M_PI *
+                (xznr(i) - xznl(i)) * (std::pow(xznr(i), 2) + xznl(i) * xznr(i) + std::pow(xznl(i), 2));
             }
 
-            mass_he += (4.0_rt / 3.0_rt) * M_PI *
-                (xznr(i) - xznl(i)) *
-                (std::pow(xznr(i), 2) + xznl(i) * xznr(i) + std::pow(xznl(i), 2)) *
-                model_hse(i,idens) * zone_X;
+            // compute the total mass of the He layer and C/O WD
+            // note: only count the C and O if we are in the He layer
 
-            mass_wd += (4.0_rt / 3.0_rt) * M_PI *
-                (xznr(i) - xznl(i)) *
-                (std::pow(xznr(i), 2) + xznl(i) * xznr(i) + std::pow(xznl(i), 2)) *
-                model_hse(i,idens) * (model_hse(i,ispec+ic12) + model_hse(i,ispec+io16));
+            Real zone_X = model_hse(i, model::ispec+ihe4);
+            if (problem_rp::X_N14 > 0.0) {
+                zone_X += model_hse(i, model::ispec+in14);
+            }
+
+            if (problem_rp::X_C12 > 0.0 && zone_X > 10.0 * network_rp::small_x) {
+                zone_X += model_hse(i, model::ispec+ic12);
+            }
+
+            if (problem_rp::X_O16 > 0.0 && zone_X > 10.0 * network_rp::small_x) {
+                zone_X += model_hse(i, model::ispec+io16);
+            }
+
+            Real core_X{0.0};
+            if (problem_rp::X_C12 == 0.0 && problem_rp::X_O16 == 0.0) {
+                core_X += model_hse(i, model::ispec+ic12) + model_hse(i, model::ispec+io16);
+            } else if (model_hse(i, model::ispec+ihe4) <= network_rp::small_x) {
+                core_X += model_hse(i, model::ispec+ic12) + model_hse(i, model::ispec+io16);
+            }
+
+            mass_he += vol * model_hse(i, model::idens) * zone_X;
+            mass_wd += vol * model_hse(i, model::idens) * core_X;
+        }
+
+        if (mass_wd == 0.0) {
+            std::string err_file = "zero_mass";
+            write_model(err_file, xzn_hse, model_hse);
+            amrex::Error("zero mass");
         }
 
         if (rho_c_old < 0.0_rt) {
@@ -520,8 +530,8 @@ AMREX_INLINE void init_1d() {
         } else {
             // have we converged
 
-            if (std::abs(mass_wd - M_tot) / M_tot < TOL_WD_MASS &&
-                std::abs(mass_he - M_He) / M_He < TOL_HE_MASS) {
+            if (std::abs(mass_wd - problem_rp::M_tot) / problem_rp::M_tot < TOL_WD_MASS &&
+                std::abs(mass_he - problem_rp::M_He) / problem_rp::M_He < TOL_HE_MASS) {
                 mass_converged = true;
                 break;
             }
@@ -530,7 +540,7 @@ AMREX_INLINE void init_1d() {
 
             // M_tot = M(rho_c) + dM/drho |_rho_c x drho + ...
 
-            Real drho_c = (M_tot - mass_wd) /
+            Real drho_c = (problem_rp::M_tot - mass_wd) /
                 ((mass_wd  - mass_wd_old) / (rho_c - rho_c_old));
 
             rho_c_old = rho_c;
@@ -540,7 +550,7 @@ AMREX_INLINE void init_1d() {
                                amrex::max((rho_c + drho_c), 0.9_rt * rho_c_old));
 
 
-            Real drho_he = (M_He - mass_he) /
+            Real drho_he = (problem_rp::M_He - mass_he) /
                 ((mass_he  - mass_he_old) / (rho_he - rho_he_old));
 
             rho_he_old = rho_he;
@@ -549,7 +559,6 @@ AMREX_INLINE void init_1d() {
             rho_he = amrex::min(1.5_rt * rho_he_old,
                                 amrex::max((rho_he + drho_he), 0.75_rt * rho_he_old));
 
-            std::cout << "current mass = " << mass_wd / C::M_solar << " " << mass_he / C::M_solar << std::endl;
         }
 
     } // end mass constraint loop
@@ -558,6 +567,11 @@ AMREX_INLINE void init_1d() {
         amrex::Error("ERROR: mass did not converge");
     }
 
+    std::cout << "converged" << std::endl;
+    std::cout << "central density of WD: " << rho_c << std::endl;
+    std::cout << "density at base of He layer: " << rho_he << std::endl;
+
+
     std::cout << "final masses: " << std::endl;
     std::cout << " mass WD: " << mass_wd / C::M_solar << std::endl;
     std::cout << " mass He: " << mass_he / C::M_solar << std::endl;
@@ -565,7 +579,10 @@ AMREX_INLINE void init_1d() {
 
     // store the model
 
-    std::string dxstr = num_to_unitstring(dCoord);
+    Real dCoord = xzn_hse(1) - xzn_hse(0);
+    std::string dxstr = "dx" + num_to_unitstring(dCoord);
+
+    std::string delta_str = num_to_unitstring(problem_rp::delta);
 
     std::stringstream ss;
     ss << std::setprecision(2) << std::fixed << mass_wd / C::M_solar;
@@ -575,60 +592,53 @@ AMREX_INLINE void init_1d() {
     ss2 << std::setprecision(3) << std::fixed << mass_he / C::M_solar;
     std::string mass_he_str = ss2.str();
 
-    std::string outfile_base = "sub_chandra.M_WD-" + mass_wd_str + ".M_He-" + mass_he_str;
+    std::stringstream ss3;
+    ss3 << problem_rp::temp_base;
+    std::string temp_base_str = ss3.str();
+
+    std::string outfile_base = problem_rp::prefix + ".M_WD-" + mass_wd_str + ".M_He-" + mass_he_str  + ".delta" + delta_str + ".temp_base-" + temp_base_str;
+
 
     std::string outfile = outfile_base + ".hse";
 
-    if (mixed_co_wd) {
+    if (problem_rp::mixed_co_wd) {
         outfile += ".CO";
     } else {
         outfile += ".C";
     }
 
-    if (X_N14 > 0.0_rt) {
+    if (problem_rp::X_C12 > 0.0_rt) {
+        outfile += ".C12";
+    }
+
+    if (problem_rp::X_N14 > 0.0_rt) {
         outfile += ".N14";
     }
 
-    outfile += "." + dxstr;
-
-    std::ofstream of;
-    of.open(outfile);
-
-    of << "# npts = " << nx << std::endl;
-    of << "# num of variables = " << nvar << std::endl;
-    of << "# density" << std::endl;
-    of << "# temperature" << std::endl;
-    of << "# pressure" << std::endl;
-
-    for (int n = 0; n < NumSpec; ++n) {
-        of << "# " << spec_names_cxx[n] << std::endl;
+    if (problem_rp::X_O16 > 0.0_rt) {
+        outfile += ".O16";
     }
 
-    for (int i = 0; i < nx; ++i) {
-        of << std::setprecision(12) << std::setw(20) << xzn_hse(i) << " ";
-        of << std::setprecision(12) << std::setw(20) << model_hse(i, idens) << " ";
-        of << std::setprecision(12) << std::setw(20) << model_hse(i, itemp) << " ";
-        of << std::setprecision(12) << std::setw(20) << model_hse(i, ipres) << " ";
-        for (int n = 0; n < NumSpec; ++n) {
-            of << std::setprecision(12) << std::setw(20) << model_hse(i, ispec+n) << " ";
-        }
-        of << std::endl;
-    }
-
-    of.close();
+    write_model(outfile, xzn_hse, model_hse);
 
     // extra info
 
     outfile = outfile_base + ".extras";
 
-    if (mixed_co_wd) {
+    if (problem_rp::mixed_co_wd) {
         outfile += ".CO";
     } else {
         outfile += ".C";
     }
 
-    if (X_N14 > 0.0_rt) {
+    if (problem_rp::X_C12 > 0.0_rt) {
+        outfile += ".C12";
+    }
+    if (problem_rp::X_N14 > 0.0_rt) {
         outfile += ".N14";
+    }
+    if (problem_rp::X_O16 > 0.0_rt) {
+        outfile += ".O16";
     }
 
     outfile += "." + dxstr;
@@ -636,11 +646,11 @@ AMREX_INLINE void init_1d() {
     std::ofstream ef;
     ef.open(outfile);
 
-    ef << "# npts = " << nx << std::endl;
+    ef << "# npts = " << problem_rp::nx << std::endl;
     ef << "# cs" << std::endl;
     ef << "# entropy" << std::endl;
 
-    for (int i = 0; i < nx; ++i) { 
+    for (int i = 0; i < problem_rp::nx; ++i) { 
         ef << std::setprecision(12) << std::setw(20) << xzn_hse(i) << " ";
         ef << std::setprecision(12) << std::setw(20) << cs_hse(i) << " ";
         ef << std::setprecision(12) << std::setw(20) << s_hse(i) << std::endl;
@@ -652,12 +662,12 @@ AMREX_INLINE void init_1d() {
 
     Real max_hse_error = -1.e30_rt;
 
-    for (int i = 1; i < nx-1; ++i) {
+    for (int i = 1; i < problem_rp::nx-1; ++i) {
         Real g_zone = -C::Gconst * M_enclosed(i-1) / (xznr(i-1) * xznr(i-1));
-        Real dpdr = (model_hse(i, ipres) - model_hse(i-1, ipres)) / delx;
-        Real rhog = 0.5_rt * (model_hse(i, idens) + model_hse(i-1, idens)) * g_zone;
+        Real dpdr = (model_hse(i, model::ipres) - model_hse(i-1, model::ipres)) / delx;
+        Real rhog = 0.5_rt * (model_hse(i, model::idens) + model_hse(i-1, model::idens)) * g_zone;
 
-        if (dpdr != 0.0_rt && model_hse(i+1, idens) > low_density_cutoff) {
+        if (dpdr != 0.0_rt && model_hse(i+1, model::idens) > problem_rp::low_density_cutoff) {
             max_hse_error = amrex::max(max_hse_error, std::abs(dpdr - rhog) / std::abs(dpdr));
         }
     }

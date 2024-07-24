@@ -12,7 +12,8 @@ USE_MPI = FALSE
 USE_OMP = FALSE
 
 USE_REACT = TRUE
-USE_CXX_EOS = TRUE
+
+BL_NO_FORT = TRUE
 
 MAX_ZONES := 16384
 
@@ -24,8 +25,7 @@ EBASE := initialmodel
 # EOS and network
 EOS_DIR := helmholtz
 
-NETWORK_DIR := subch
-#NETWORK_INPUTS := triple_alpha_plus_o.net
+NETWORK_DIR := subch_simple
 
 Bpack := ./Make.package
 Blocs := . ..

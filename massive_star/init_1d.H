@@ -28,8 +28,13 @@
 #include <fundamental_constants.H>
 
 #include <network.H>
-#include <nse.H>
+#include <nse_table.H>
+#include <nse_table_check.H>
 
+#include <eos.H>
+#include <eos_composition.H>
+
+#include <coord_info.H>
 #include <read_model.H>
 #include <interpolate.H>
 
@@ -65,74 +70,28 @@ set_aux(eos_t& eos_state) {
         // we are in NSE, so leave ye alone, but get abar and redo xn
 
         Real abar_pass;
-        Real dq_pass;
+        Real bea_pass;
         Real dyedt_pass;
+        Real dabardt_pass;
+        Real dbeadt_pass;
+        Real e_nu_pass;
 
-        nse_interp(eos_state.T, eos_state.rho, eos_state.aux[AuxZero::iye],
-                   abar_pass, dq_pass, dyedt_pass, eos_state.xn);
+	nse_table_t nse_state;
+	nse_state.T = eos_state.T;
+	nse_state.rho = eos_state.rho;
+	nse_state.Ye = eos_state.aux[AuxZero::iye];
 
-        eos_state.aux[AuxZero::iabar] = abar_pass;
+        nse_interp(nse_state);
+
+	for (int n = 0; n < NumSpec; ++n) {
+	    eos_state.xn[n] = nse_state.X[n];
+	}
+
+        eos_state.aux[AuxZero::iabar] = nse_state.abar;
 
     } else {
-        set_nse_aux_from_X(eos_state);
+        set_aux_comp_from_X(eos_state);
     }
-}
-
-
-AMREX_INLINE void
-write_model(std::string model_name,
-            const Array1D<Real, 0, NPTS_MODEL-1>& xzn_hse,
-            const Array2D<Real, 0, NPTS_MODEL-1, 0, model::nvar-1>& model_hse) {
-
-    // Write data stored in `model_state` array to file
-
-    int ipos = model_file.find(".dat");
-    if (ipos < 0) {
-        ipos = model_file.find(".txt");
-    }
-
-    std::string outfile = model_file.substr(0, ipos) + "." + model_name;
-
-    Real dx = (xzn_hse(1) - xzn_hse(0)) / 1.e5_rt;  // km
-
-    std::stringstream ss;
-    ss << dx;
-    std::string dx_str = ss.str();
-
-    outfile += "." + dx_str + "km";
-
-    std::cout << "writing " << model_name << " model to " << outfile << std::endl;
-
-    std::ofstream of;
-    of.open(outfile);
-
-    of << "# npts = " << nx << std::endl;
-    of << "# num of variables = " << model::nvar << std::endl;
-    of << "# density" << std::endl;
-    of << "# temperature" << std::endl;
-    of << "# pressure" << std::endl;
-    of << "# Ye" << std::endl;
-
-    // of << "# conv_vel" << std::endl;
-
-    for (int n = 0; n < NumSpec; ++n) {
-        of << "# " << spec_names_cxx[n] << std::endl;
-    }
-
-    for (int i = 0; i < nx; ++i) {
-        of << std::setprecision(12) << std::setw(20) << xzn_hse(i) << " ";
-        of << std::setprecision(12) << std::setw(20) << model_hse(i, model::idens) << " ";
-        of << std::setprecision(12) << std::setw(20) << model_hse(i, model::itemp) << " ";
-        of << std::setprecision(12) << std::setw(20) << model_hse(i, model::ipres) << " ";
-        of << std::setprecision(12) << std::setw(20) << model_hse(i, model::iyef) << " ";
-        for (int n = 0; n < NumSpec; ++n) {
-            of << std::setprecision(12) << std::setw(20) << model_hse(i, model::ispec+n) << " ";
-        }
-        of << std::endl;
-    }
-
-    of.close();
-
 }
 
 
@@ -142,9 +101,9 @@ AMREX_INLINE void init_1d() {
     // are mapping onto, and then we want to force it into HSE on that
     // mesh.
 
-    std::cout << "here " << nx << " " << NPTS_MODEL << std::endl;
+    std::cout << "here " << problem_rp::nx << " " << NPTS_MODEL << std::endl;
 
-    if (nx > NPTS_MODEL) {
+    if (problem_rp::nx > NPTS_MODEL) {
         amrex::Error("too many zones requested -- increase NPTS_MODEL");
     }
 
@@ -160,19 +119,15 @@ AMREX_INLINE void init_1d() {
 
     // compute the coordinates of the new gridded function
 
-    Real delx = (xmax - xmin) / static_cast<Real>(nx);
+    Real delx = (problem_rp::xmax - problem_rp::xmin) / static_cast<Real>(problem_rp::nx);
 
-    for (int i = 0; i < nx; ++i) {
-        xznl(i) = xmin + static_cast<Real>(i) * delx;
-        xznr(i) = xmin + (static_cast<Real>(i) + 1.0_rt) * delx;
-        xzn_hse(i) = 0.5_rt * (xznl(i) + xznr(i));
-    }
+    fill_coord_arrays(xzn_hse, xznl, xznr);
 
     // read in the MESA model
 
     initial_model_t initial_model;
 
-    read_file(model_file, initial_model);
+    read_file(problem_rp::model_file, initial_model);
 
     std::ofstream of;
     of.open("model.orig");
@@ -214,7 +169,7 @@ AMREX_INLINE void init_1d() {
 
     // put the model onto our new uniform grid
 
-    for (int i = 0; i < nx; ++i) {
+    for (int i = 0; i < problem_rp::nx; ++i) {
 
        for (int n = 0; n < model::nvar; ++n) {
 
@@ -226,7 +181,7 @@ AMREX_INLINE void init_1d() {
 
        }
 
-       // make sure that the species (mass fractions) summ to 1
+       // make sure that the species (mass fractions) sum to 1
 
        Real summ = 0.0_rt;
        for (int n = 0; n < NumSpec; ++n) {
@@ -241,16 +196,14 @@ AMREX_INLINE void init_1d() {
 
     }
 
-    write_model("uniform", xzn_hse, model_mesa_hse);
+    write_model("uniform", xzn_hse, model_mesa_hse, true);
 
 
     // reset the composition if we are in NSE
 
     eos_t eos_state;
 
-    for (int i = 0; i < nx; ++i) {
-
-        // we need to fill a burn_t in order to check for NSE
+    for (int i = 0; i < problem_rp::nx; ++i) {
 
         eos_state.rho = model_mesa_hse(i, model::idens);
         eos_state.T = model_mesa_hse(i, model::itemp);
@@ -277,7 +230,7 @@ AMREX_INLINE void init_1d() {
 
     }
 
-    write_model("composition", xzn_hse, model_mesa_hse);
+    write_model("composition", xzn_hse, model_mesa_hse, true);
 
 
     // iterate to find the central density
@@ -289,204 +242,226 @@ AMREX_INLINE void init_1d() {
     Real ye;
     Real xn[NumSpec];
 
-    // because the MESA model likely begins at a larger radius than
-    // our first HSE model zone, simple interpolation will not do a
-    // good job.  We want to integrate in from the zone that best
-    // matches the first MESA model zone, assumming HSE and constant
-    // entropy.
+    // the MESA model may begin at a larger radius than our first HSE
+    // model zone, so simple interpolation will not do a good job.  We
+    // want to integrate in from the zone that best matches the first
+    // MESA model zone, assuming HSE and constant entropy.
 
     // find the zone in the uniformly gridded model that corresponds to the
     // first zone of the original model
 
     int ibegin = -1;
 
-    for (int i = 0; i < nx; ++i) {
+    for (int i = 0; i < problem_rp::nx; ++i) {
         if (xzn_hse(i) >= initial_model.r(0)) {
             ibegin = i;
             break;;
         }
     }
 
-    // store the central density.  We will iterate until the central density
-    // converges
+    std::cout << "ibegin = " << ibegin << std::endl;
 
-    Real central_density = model_mesa_hse(0, model::idens);
+    if (ibegin > 0) {
 
-    std::cout << "interpolated central density = " << central_density << std::endl;
+	// store the central density.  We will iterate until the central density
+	// converges
 
-    bool converged_central_density = false;
+	Real central_density = model_mesa_hse(0, model::idens);
 
-    for (int iter_dens = 0; iter_dens < MAX_ITER; ++iter_dens) {
+	std::cout << "interpolated central density = " << central_density << std::endl;
 
-        // compute the enclosed mass
+	bool converged_central_density = false;
 
-        M_enclosed(0) = (4.0_rt/3.0_rt) * M_PI * std::pow(delx, 3) * model_mesa_hse(0, model::idens);
+	for (int iter_dens = 0; iter_dens < MAX_ITER; ++iter_dens) {
 
-        for (int i = 1; i <= ibegin; ++i) {
-            M_enclosed(i) = M_enclosed(i-1) +
-                (4.0_rt/3.0_rt) * M_PI * (xznr(i) - xznl(i)) *
-                (std::pow(xznr(i), 2) + xznl(i) * xznr(i) + std::pow(xznl(i), 2)) *
-                model_mesa_hse(i, model::idens);
-        }
+	    // compute the enclosed mass
 
-        // now start at ibegin and integrate inward
+	    M_enclosed(0) = (4.0_rt/3.0_rt) * M_PI * std::pow(delx, 3) * model_mesa_hse(0, model::idens);
 
-        eos_state.T = model_mesa_hse(ibegin, model::itemp);
-        eos_state.rho = model_mesa_hse(ibegin, model::idens);
-        for (int n = 0; n < NumSpec; ++n) {
-            eos_state.xn[n] = model_mesa_hse(ibegin, model::ispec+n);
-        }
+	    for (int i = 1; i <= ibegin; ++i) {
+		M_enclosed(i) = M_enclosed(i-1) +
+		    (4.0_rt/3.0_rt) * M_PI * (xznr(i) - xznl(i)) *
+		    (std::pow(xznr(i), 2) + xznl(i) * xznr(i) + std::pow(xznl(i), 2)) *
+		    model_mesa_hse(i, model::idens);
+	    }
 
-       eos_state.aux[AuxZero::iye] = model_mesa_hse(ibegin, model::iyef);
+	    // now start at ibegin and integrate inward
 
-       set_aux(eos_state);
+	    eos_state.T = model_mesa_hse(ibegin, model::itemp);
+	    eos_state.rho = model_mesa_hse(ibegin, model::idens);
+	    for (int n = 0; n < NumSpec; ++n) {
+		eos_state.xn[n] = model_mesa_hse(ibegin, model::ispec+n);
+	    }
 
-       eos(eos_input_rt, eos_state);
+	   eos_state.aux[AuxZero::iye] = model_mesa_hse(ibegin, model::iyef);
 
-       model_mesa_hse(ibegin, model::ipres) = eos_state.p;
+	   set_aux(eos_state);
 
-       for (int i = 0; i < nx; ++i) {
-           entropy_want(i) = eos_state.s;
-       }
+	   eos(eos_input_rt, eos_state);
 
-       for (int i = ibegin-1; i >= 0; --i) {
+	   model_mesa_hse(ibegin, model::ipres) = eos_state.p;
 
-           // as the initial guess for the temperature and density, use
-           // the previous zone
+	   for (int i = 0; i < problem_rp::nx; ++i) {
+	       entropy_want(i) = eos_state.s;
+	   }
 
-           dens_zone = model_mesa_hse(i+1, model::idens);
-           temp_zone = model_mesa_hse(i+1, model::itemp);
-           for (int n = 0; n < NumSpec; ++n) {
-               xn[n] = model_mesa_hse(i, model::ispec+n);
-           }
+	   for (int i = ibegin-1; i >= 0; --i) {
 
-          ye = model_mesa_hse(i, model::iyef);
+	       // as the initial guess for the temperature and density, use
+	       // the previous zone
 
-          // compute the gravitational acceleration on the interface between zones
-          // i and i+1
+	       dens_zone = model_mesa_hse(i+1, model::idens);
+	       temp_zone = model_mesa_hse(i+1, model::itemp);
+	       for (int n = 0; n < NumSpec; ++n) {
+		   xn[n] = model_mesa_hse(i, model::ispec+n);
+	       }
 
-          Real g_zone = -C::Gconst * M_enclosed(i) / (xznr(i) * xznr(i));
+	      ye = model_mesa_hse(i, model::iyef);
 
-          // iteration loop
+	      // compute the gravitational acceleration on the interface between zones
+	      // i and i+1
 
-          // start off the Newton loop by saying that the zone has not converged
+	      Real g_zone = -C::Gconst * M_enclosed(i) / (xznr(i) * xznr(i));
 
-          bool converged_hse = false;
+	      // iteration loop
 
-          Real p_want;
-          Real drho;
-          Real dtemp;
+	      // start off the Newton loop by saying that the zone has not converged
 
-          for (int iter = 0; iter < MAX_ITER; ++iter) {
+	      bool converged_hse = false;
 
-             p_want = model_mesa_hse(i+1, model::ipres) -
-                 delx * 0.5_rt * (dens_zone + model_mesa_hse(i+1, model::idens)) * g_zone;
+	      Real p_want;
+	      Real drho;
+	      Real dtemp;
 
-             // now we have two functions to zero:
-             //   A = p_want - p(rho,T)
-             //   B = entropy_want - s(rho,T)
-             // We use a two dimensional Taylor expansion and find the
-             // deltas for both density and temperature
+	      for (int iter = 0; iter < MAX_ITER; ++iter) {
 
-             // (t, rho) -> (p, s)
+		 p_want = model_mesa_hse(i+1, model::ipres) -
+		     delx * 0.5_rt * (dens_zone + model_mesa_hse(i+1, model::idens)) * g_zone;
 
-             eos_state.T = temp_zone;
-             eos_state.rho = dens_zone;
-             for (int n = 0; n < NumSpec; ++n) {
-                 eos_state.xn[n] = xn[n];
-             }
+		 // now we have two functions to zero:
+		 //   A = p_want - p(rho,T)
+		 //   B = entropy_want - s(rho,T)
+		 // We use a two dimensional Taylor expansion and find the
+		 // deltas for both density and temperature
 
-             eos_state.aux[AuxZero::iye] = ye;
+		 // (t, rho) -> (p, s)
 
-             set_aux(eos_state);
+		 eos_state.T = temp_zone;
+		 eos_state.rho = dens_zone;
+		 for (int n = 0; n < NumSpec; ++n) {
+		     eos_state.xn[n] = xn[n];
+		 }
 
-             eos(eos_input_rt, eos_state);
+		 eos_state.aux[AuxZero::iye] = ye;
 
-             entropy = eos_state.s;
-             pres_zone = eos_state.p;
+		 set_aux(eos_state);
 
-             Real dpT = eos_state.dpdT;
-             Real dpd = eos_state.dpdr;
-             Real dsT = eos_state.dsdT;
-             Real dsd = eos_state.dsdr;
+		 eos(eos_input_rt, eos_state);
 
-             Real A = p_want - pres_zone;
-             Real B = entropy_want(i) - entropy;
+		 entropy = eos_state.s;
+		 pres_zone = eos_state.p;
 
-             Real dAdT = -dpT;
-             Real dAdrho = -0.5_rt * delx * g_zone - dpd;
-             Real dBdT = -dsT;
-             Real dBdrho = -dsd;
+		 Real dpT = eos_state.dpdT;
+		 Real dpd = eos_state.dpdr;
+		 Real dsT = eos_state.dsdT;
+		 Real dsd = eos_state.dsdr;
 
-             dtemp = (B - (dBdrho / dAdrho) * A) /
-                 ((dBdrho / dAdrho) * dAdT - dBdT);
+		 Real A = p_want - pres_zone;
+		 Real B = entropy_want(i) - entropy;
 
-             drho = -(A + dAdT * dtemp) / dAdrho;
+		 Real dAdT = -dpT;
+		 Real dAdrho = -0.5_rt * delx * g_zone - dpd;
+		 Real dBdT = -dsT;
+		 Real dBdrho = -dsd;
 
-             dens_zone =
-                 amrex::max(0.9_rt * dens_zone,
-                            amrex::min(dens_zone + drho, 1.1_rt * dens_zone));
+		 dtemp = (B - (dBdrho / dAdrho) * A) /
+		     ((dBdrho / dAdrho) * dAdT - dBdT);
 
-             temp_zone =
-                 amrex::max(0.9_rt * temp_zone,
-                            amrex::min(temp_zone + dtemp, 1.1_rt * temp_zone));
+		 drho = -(A + dAdT * dtemp) / dAdrho;
 
-             if (std::abs(drho) < TOL * dens_zone && std::abs(dtemp) < TOL * temp_zone) {
-                 converged_hse = true;
-                 break;
-             }
+		 dens_zone =
+		     amrex::max(0.9_rt * dens_zone,
+				amrex::min(dens_zone + drho, 1.1_rt * dens_zone));
 
-          }
+		 temp_zone =
+		     amrex::max(0.9_rt * temp_zone,
+				amrex::min(temp_zone + dtemp, 1.1_rt * temp_zone));
 
-          if (! converged_hse) {
-              std::cout << "Error zone " << i << " did not converge in init_1d" << std::endl;
-              std::cout << "integrate down" << std::endl;
-              std::cout << "dens_zone, temp_zone = " << dens_zone << " " << temp_zone << std::endl;
-              std::cout << "p_want = " << p_want << std::endl;
-              std::cout << "drho = " << drho << std::endl;
-              amrex::Error("Error: HSE non-convergence");
-          }
+		 if (std::abs(drho) < TOL * dens_zone && std::abs(dtemp) < TOL * temp_zone) {
+		     converged_hse = true;
+		     break;
+		 }
 
-          // call the EOS one more time for this zone and then go on to the next
-          // (t, rho) -> (p, s)
+	      }
 
-          eos_state.T = temp_zone;
-          eos_state.rho = dens_zone;
-          for (int n = 0; n < NumSpec; ++n) {
-              eos_state.xn[n] = xn[n];
-          }
+	      if (! converged_hse) {
+		  std::cout << "Error zone " << i << " did not converge in init_1d" << std::endl;
+		  std::cout << "integrate down" << std::endl;
+		  std::cout << "dens_zone, temp_zone = " << dens_zone << " " << temp_zone << std::endl;
+		  std::cout << "p_want = " << p_want << std::endl;
+		  std::cout << "drho = " << drho << std::endl;
+		  amrex::Error("Error: HSE non-convergence");
+	      }
 
-          eos_state.aux[AuxZero::iye] = ye;
+	      // call the EOS one more time for this zone and then go on to the next
+	      // (t, rho) -> (p, s)
 
-          set_aux(eos_state);
+	      eos_state.T = temp_zone;
+	      eos_state.rho = dens_zone;
+	      for (int n = 0; n < NumSpec; ++n) {
+		  eos_state.xn[n] = xn[n];
+	      }
 
-          eos(eos_input_rt, eos_state);
+	      eos_state.aux[AuxZero::iye] = ye;
 
-          pres_zone = eos_state.p;
+	      set_aux(eos_state);
 
-          // update the thermodynamics in this zone
-          model_mesa_hse(i, model::idens) = dens_zone;
-          model_mesa_hse(i, model::itemp) = temp_zone;
-          model_mesa_hse(i, model::ipres) = pres_zone;
-          model_mesa_hse(i, model::ientr) = eos_state.s;
+	      eos(eos_input_rt, eos_state);
 
-       }
+	      pres_zone = eos_state.p;
 
-       if (std::abs(model_mesa_hse(0, model::idens) - central_density) < TOL*central_density) {
-           converged_central_density = true;
-           break;
-       }
+	      // update the thermodynamics in this zone
+	      model_mesa_hse(i, model::idens) = dens_zone;
+	      model_mesa_hse(i, model::itemp) = temp_zone;
+	      model_mesa_hse(i, model::ipres) = pres_zone;
+	      model_mesa_hse(i, model::ientr) = eos_state.s;
 
-       central_density = model_mesa_hse(0, model::idens);
+	   }
+
+	   if (std::abs(model_mesa_hse(0, model::idens) - central_density) < TOL*central_density) {
+	       converged_central_density = true;
+	       break;
+	   }
+
+	   central_density = model_mesa_hse(0, model::idens);
+
+	}
+
+	if (! converged_central_density) {
+	    amrex::Error("Error: non-convergence of central density");
+	}
+
+	std::cout << "converged central density = " << model_mesa_hse(0, model::idens) << std::endl << std::endl;
+
+    } else {
+
+	// we will integrate from zone 0, so make sure that is
+	// thermodynamically consistent
+
+	eos_state.T = model_mesa_hse(0, model::itemp);
+	eos_state.rho = model_mesa_hse(0, model::idens);
+	for (int n = 0; n < NumSpec; ++n) {
+	    eos_state.xn[n] = model_mesa_hse(0, model::ispec+n);
+	}
+
+	eos_state.aux[AuxZero::iye] = model_mesa_hse(0, model::iyef);
+
+	set_aux(eos_state);
+	eos(eos_input_rt, eos_state);
+
+	model_mesa_hse(0, model::ipres) = eos_state.p;
 
     }
-
-    if (! converged_central_density) {
-        amrex::Error("Error: non-convergence of central density");
-    }
-
-    std::cout << "converged central density = " << model_mesa_hse(0, model::idens) << std::endl << std::endl;
-
 
     // compute the full HSE model using our new central density and
     // temperature, and the temperature structure as dictated by the
@@ -501,7 +476,7 @@ AMREX_INLINE void init_1d() {
     bool fluff = false;
     int index_hse_fluff = -1;
 
-    for (int i = 1; i < nx; ++i) {
+    for (int i = 1; i < problem_rp::nx; ++i) {
 
         // use previous zone as initial guess for rho
 
@@ -556,6 +531,11 @@ AMREX_INLINE void init_1d() {
 
                eos_state.aux[AuxZero::iye] = ye;
 
+	       // note: if we are in NSE, then as we adjust density in
+	       // this Newton loop, the composition will change, so
+	       // convergence should mean that the density and
+	       // composition have converged.
+
                set_aux(eos_state);
 
                eos(eos_input_rt, eos_state);
@@ -592,6 +572,7 @@ AMREX_INLINE void init_1d() {
                std::cout << "drho = " << drho << std::endl;
                amrex::Error("Error: HSE non-convergence");
            }
+
 
            if (temp_zone < temp_fluff) {
                temp_zone = temp_fluff;
@@ -649,15 +630,15 @@ AMREX_INLINE void init_1d() {
 
     std::string model_name = "hse";
 
-    write_model(model_name, xzn_hse, model_mesa_hse);
+    write_model(model_name, xzn_hse, model_mesa_hse, true);
 
-    std::cout << "total mass = " << M_enclosed(nx-1) << " g; " << M_enclosed(nx-1) / C::M_solar << " solar masses" << std::endl;
+    std::cout << "total mass = " << M_enclosed(problem_rp::nx-1) << " g; " << M_enclosed(problem_rp::nx-1) / C::M_solar << " solar masses" << std::endl;
 
     // compute the maximum HSE error
 
     Real max_hse_error = -1.e30_rt;
 
-    for (int i = 1; i < nx-1; ++i) {
+    for (int i = 1; i < problem_rp::nx-1; ++i) {
         Real g_zone = -C::Gconst * M_enclosed(i-1) / std::pow(xznr(i-1), 2);
         Real dpdr = (model_mesa_hse(i, model::ipres) - model_mesa_hse(i-1, model::ipres)) / delx;
         Real rhog = 0.5_rt * (model_mesa_hse(i, model::idens) + model_mesa_hse(i-1, model::idens)) * g_zone;

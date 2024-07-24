@@ -12,7 +12,12 @@ USE_MPI = FALSE
 USE_OMP = FALSE
 
 USE_REACT = TRUE
-USE_CXX_EOS = TRUE
+
+BL_NO_FORT = TRUE
+
+MAX_ZONES := 16384
+
+DEFINES += -DNPTS_MODEL=$(MAX_ZONES)
 
 # programs to be compiled
 EBASE := initialmodel
@@ -24,7 +29,7 @@ NETWORK_DIR := general_null
 NETWORK_INPUTS := ignition_wdconvect.net
 
 Bpack := ./Make.package
-Blocs := .
+Blocs := . ..
 
 EXTERN_SEARCH += . ..
 

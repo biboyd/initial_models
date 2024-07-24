@@ -1,45 +1,3 @@
-//  Create a 1-d hydrostatic, atmosphere with an isothermal region
-//  (T_star) representing the NS, a hyperbolic tangent rise to a
-//  peak temperature (T_base) representing the base of an accreted
-//  layer, an isoentropic profile down to a lower temperature (T_lo),
-//  and then isothermal. This can serve as an initial model for a
-//  nova or XRB.
-//
-//  The temperature profile is:
-//
-//         ^
-//         |
-//  T_base +        /\
-//         |       /  \
-//         |      /  . \
-//  T_star +-----+      \
-//         |     .   .   \
-//         |              \
-//         |     .   .     \
-//  T_lo   +                +-----------
-//         |     .   .
-//         +-----+---+---------------> r
-//         |      \  /
-//         |      delta
-//         |< H_star>|
-//
-//  We take dens_base, the density at the base of the isentropic layer
-//  as input.  The composition is "ash" in the lower isothermal region
-//  and "fuel" in the isentropic and upper isothermal regions.  In the
-//  linear transition region, we linearly interpolate the composition.
-//
-//  The fuel and ash compositions are specified by the fuel?_name,
-//  fuel?_frac and ash?_name, ash?_frac parameters (name of the species
-//  and mass fraction).  Where ? = 1,2,3.
-//
-//  The model is placed into HSE by the following differencing:
-//
-//   (1/dr) [ <P>_i - <P>_{i-1} ] = (1/2) [ <rho>_i + <rho>_{i-1} ] g
-//
-//  This will be iterated over in tandem with the EOS call,
-//  P(i-1) = P_eos(rho(i-1), T(i-1), X(i-1)
-//
-
 #include <AMReX_Array.H>
 
 #include <sstream>
@@ -47,20 +5,14 @@
 #include <extern_parameters.H>
 #include <fundamental_constants.H>
 
+#include <coord_info.H>
+#include <read_model.H>
 #include <model_util.H>
 
 using namespace amrex;
 
 AMREX_INLINE void init_1d()
 {
-
-    // define convenient indices for the scalars
-
-    const int nvar = 3 + NumSpec;
-    const int idens = 0;
-    const int itemp = 1;
-    const int ipres = 2;
-    const int ispec = 3;
 
     const Real TOL = 1.e-10_rt;
 
@@ -72,82 +24,82 @@ AMREX_INLINE void init_1d()
 
     bool species_defined{true};
 
-    int ifuel1 = network_spec_index(fuel1_name);
+    int ifuel1 = network_spec_index(problem_rp::fuel1_name);
     if (ifuel1 < 0)
         species_defined = false;
 
     int ifuel2{-1};
-    if (fuel2_name != "")
+    if (problem_rp::fuel2_name != "")
     {
-        ifuel2 = network_spec_index(fuel2_name);
+        ifuel2 = network_spec_index(problem_rp::fuel2_name);
         if (ifuel2 < 0)
             species_defined = false;
     }
 
     int ifuel3{-1};
-    if (fuel3_name != "")
+    if (problem_rp::fuel3_name != "")
     {
-        ifuel3 = network_spec_index(fuel3_name);
+        ifuel3 = network_spec_index(problem_rp::fuel3_name);
         if (ifuel3 < 0)
             species_defined = false;
     }
 
     int ifuel4{-1};
-    if (fuel4_name != "")
+    if (problem_rp::fuel4_name != "")
     {
-        ifuel4 = network_spec_index(fuel4_name);
+        ifuel4 = network_spec_index(problem_rp::fuel4_name);
         if (ifuel4 < 0)
             species_defined = false;
     }
 
     int ifuel5{-1};
-    if (fuel5_name != "")
+    if (problem_rp::fuel5_name != "")
     {
-        ifuel5 = network_spec_index(fuel5_name);
+        ifuel5 = network_spec_index(problem_rp::fuel5_name);
         if (ifuel5 < 0)
             species_defined = false;
     }
 
     int ifuel6{-1};
-    if (fuel6_name != "")
+    if (problem_rp::fuel6_name != "")
     {
-        ifuel6 = network_spec_index(fuel6_name);
+        ifuel6 = network_spec_index(problem_rp::fuel6_name);
         if (ifuel6 < 0)
             species_defined = false;
     }
 
     int ifuel7{-1};
-    if (fuel7_name != "")
+    if (problem_rp::fuel7_name != "")
     {
-        ifuel7 = network_spec_index(fuel7_name);
+        ifuel7 = network_spec_index(problem_rp::fuel7_name);
         if (ifuel7 < 0)
             species_defined = false;
     }
 
-    int iash1 = network_spec_index(ash1_name);
+    int iash1 = network_spec_index(problem_rp::ash1_name);
     if (iash1 < 0)
         species_defined = false;
 
     int iash2{-1};
-    if (ash2_name != "")
+    if (problem_rp::ash2_name != "")
     {
-        iash2 = network_spec_index(ash2_name);
+        iash2 = network_spec_index(problem_rp::ash2_name);
         if (iash2 < 0)
             species_defined = false;
     }
 
     int iash3{-1};
-    if (ash3_name != "")
+    if (problem_rp::ash3_name != "")
     {
-        iash3 = network_spec_index(ash3_name);
+        iash3 = network_spec_index(problem_rp::ash3_name);
         if (iash3 < 0)
             species_defined = false;
     }
 
     int iash4{-1};
-    if (ash4_name != "")
+    if (problem_rp::ash4_name != "")
     {
-        iash4 = network_spec_index(ash4_name);
+        iash4 = network_spec_index(problem_rp::ash4_name);
         if (iash4 < 0)
             species_defined = false;
     }
@@ -165,52 +117,54 @@ AMREX_INLINE void init_1d()
 
     Real xn_star[NumSpec] = {smallx};
 
-    xn_star[iash1] = ash1_frac;
-    if (ash2_name != "")
-        xn_star[iash2] = ash2_frac;
-    if (ash3_name != "")
-        xn_star[iash3] = ash3_frac;
-    if (ash4_name != "")
-        xn_star[iash4] = ash4_frac;
+    xn_star[iash1] = problem_rp::ash1_frac;
+    if (problem_rp::ash2_name != "")
+        xn_star[iash2] = problem_rp::ash2_frac;
+    if (problem_rp::ash3_name != "")
+        xn_star[iash3] = problem_rp::ash3_frac;
+    if (problem_rp::ash4_name != "")
+        xn_star[iash4] = problem_rp::ash4_frac;
 
     // and the composition of the accreted layer
 
     Real xn_base[NumSpec] = {smallx};
 
-    xn_base[ifuel1] = fuel1_frac;
-    if (fuel2_name != "")
-        xn_base[ifuel2] = fuel2_frac;
-    if (fuel3_name != "")
-        xn_base[ifuel3] = fuel3_frac;
-    if (fuel4_name != "")
-        xn_base[ifuel4] = fuel4_frac;
-    if (fuel5_name != "")
-        xn_base[ifuel5] = fuel5_frac;
-    if (fuel6_name != "")
-        xn_base[ifuel6] = fuel6_frac;
-    if (fuel7_name != "")
-        xn_base[ifuel7] = fuel7_frac;
+    xn_base[ifuel1] = problem_rp::fuel1_frac;
+    if (problem_rp::fuel2_name != "")
+        xn_base[ifuel2] = problem_rp::fuel2_frac;
+    if (problem_rp::fuel3_name != "")
+        xn_base[ifuel3] = problem_rp::fuel3_frac;
+    if (problem_rp::fuel4_name != "")
+        xn_base[ifuel4] = problem_rp::fuel4_frac;
+    if (problem_rp::fuel5_name != "")
+        xn_base[ifuel5] = problem_rp::fuel5_frac;
+    if (problem_rp::fuel6_name != "")
+        xn_base[ifuel6] = problem_rp::fuel6_frac;
+    if (problem_rp::fuel7_name != "")
+        xn_base[ifuel7] = problem_rp::fuel7_frac;
 
-    // check if they sum to 1
-    double sum{0.0};
+    // check if star comp. adds to 1
+    double sum_star{0.0};
     for (auto e : xn_star) {
-        sum += e;
+        sum_star += e;
     }
-    if (std::abs(sum) - 1.0_rt > NumSpec * smallx) {
+    if (std::abs(sum_star - 1.0_rt) > NumSpec * smallx) {
         amrex::Error("ERROR: ash mass fractions don't sum to 1");
     }
 
-    sum = 0.0;
+    // check if base comp. adds to 1
+    double sum_base{0.0};
     for (auto e : xn_base) {
-        if (std::abs(sum) - 1.0_rt > NumSpec * smallx) {
-            amrex::Error("ERROR: fuel mass fractions don't sum to 1");
-        }   
+        sum_base += e;
+    }
+    if (std::abs(sum_base - 1.0_rt) > NumSpec * smallx) {
+        amrex::Error("ERROR: fuel mass fractions don't sum to 1");
     }
 
     // Create a 1-d uniform grid that is identical to the mesh that we are
     // mapping onto, and then we want to force it into HSE on that mesh.
 
-    if (nx > NPTS_MODEL) {
+    if (problem_rp::nx > NPTS_MODEL) {
         amrex::Error("too many zones requested -- increase NPTS_MODEL");
     }
 
@@ -218,24 +172,17 @@ AMREX_INLINE void init_1d()
     Array1D<Real, 0, NPTS_MODEL-1> xzn_hse;
     Array1D<Real, 0, NPTS_MODEL-1> xznr_hse;
 
-    Array2D<Real, 0, NPTS_MODEL-1, 0, nvar-1> model_hse;
+    Array2D<Real, 0, NPTS_MODEL-1, 0, model::nvar-1> model_hse;
 
     // compute the coordinates of the new gridded function
 
-    Real dCoord = (xmax - xmin) / static_cast<Real>(nx);
-
-    for (int i = 0; i < nx; ++i) {
-        xznl_hse(i) = xmin + (static_cast<Real>(i)) * dCoord;
-        xzn_hse(i) = xmin + (static_cast<Real>(i) + 0.5_rt) * dCoord;
-        xznr_hse(i) = xmin + (static_cast<Real>(i) + 1.0_rt) * dCoord;
-    }
-
+    fill_coord_arrays(xzn_hse, xznl_hse, xznr_hse);
 
     // find the index of the base height
     int index_base = -1;
 
-    for (int i = 0; i < nx; ++i) {
-        if (xzn_hse(i) >= xmin + H_star + delta) {
+    for (int i = 0; i < problem_rp::nx; ++i) {
+        if (xzn_hse(i) >= problem_rp::xmin + problem_rp::H_star + problem_rp::delta) {
             index_base = i+1;
             break;
         }
@@ -253,8 +200,8 @@ AMREX_INLINE void init_1d()
     // determine the conditions at the base
 
     eos_t eos_state;
-    eos_state.T = T_base;
-    eos_state.rho = dens_base;
+    eos_state.T = problem_rp::T_base;
+    eos_state.rho = problem_rp::dens_base;
     for (int n = 0; n < NumSpec; ++n) {
         eos_state.xn[n] = xn_base[n];
     }
@@ -263,42 +210,42 @@ AMREX_INLINE void init_1d()
 
     // store the conditions at the base -- we'll use the entropy later
     // to constrain the isentropic layer
-  
+
     Real pres_base = eos_state.p;
     Real entropy_base = eos_state.s;
 
     // set an initial temperature profile and composition
 
-    for (int i = 0; i < nx; ++i) {
+    for (int i = 0; i < problem_rp::nx; ++i) {
 
         // hyperbolic tangent transition:
 
         for (int n = 0; n < NumSpec; ++n) {
-            model_hse(i, ispec+n) = xn_star[n] +
+            model_hse(i, model::ispec+n) = xn_star[n] +
                 0.5_rt * (xn_base[n] - xn_star[n]) *
-                (1.0_rt + std::tanh((xzn_hse(i) - (xmin + H_star - delta) + delta) / delta));
+                (1.0_rt + std::tanh((xzn_hse(i) - (problem_rp::xmin + problem_rp::H_star - problem_rp::delta) + problem_rp::delta) / problem_rp::delta));
         }
 
-        model_hse(i, itemp) = T_star + 0.5_rt * (T_base - T_star) *
-            (1.0_rt + std::tanh((xzn_hse(i) - (xmin + H_star - delta) + delta) / delta));
+        model_hse(i, model::itemp) = problem_rp::T_star + 0.5_rt * (problem_rp::T_base - problem_rp::T_star) *
+            (1.0_rt + std::tanh((xzn_hse(i) - (problem_rp::xmin + problem_rp::H_star - problem_rp::delta) + problem_rp::delta) / problem_rp::delta));
 
         // the density and pressure will be determined via HSE,
         // for now, set them to the base conditions
-     
-        model_hse(i, idens) = dens_base;
-        model_hse(i, ipres) = pres_base;
+
+        model_hse(i, model::idens) = problem_rp::dens_base;
+        model_hse(i, model::ipres) = pres_base;
 
     }
 
 
-    if (index_base_from_temp == 1) {
+    if (problem_rp::index_base_from_temp == 1) {
         // find the index of the base height -- look at the temperature for this
         index_base = -1;
-        for (int i = 0; i < nx; ++i) {
+        for (int i = 0; i < problem_rp::nx; ++i) {
 
-            if (model_hse(i, itemp) > 0.9995 * T_base) {
+            if (model_hse(i, model::itemp) > 0.9995 * problem_rp::T_base) {
                 index_base = i+1;
-                break;  
+                break;
             }
         }
 
@@ -313,15 +260,15 @@ AMREX_INLINE void init_1d()
     // make the base thermodynamics consistent for this base point -- that is
     // what we will integrate from!
 
-    eos_state.rho = model_hse(index_base, idens);
-    eos_state.T = model_hse(index_base, itemp);
+    eos_state.rho = model_hse(index_base, model::idens);
+    eos_state.T = model_hse(index_base, model::itemp);
     for (int n = 0; n < NumSpec; ++n) {
-        eos_state.xn[n] = model_hse(index_base, ispec+n);
+        eos_state.xn[n] = model_hse(index_base, model::ispec+n);
     }
 
     eos(eos_input_rt, eos_state);
 
-    model_hse(index_base, ipres) = eos_state.p;
+    model_hse(index_base, model::ipres) = eos_state.p;
 
 
     // HSE + entropy solve
@@ -343,27 +290,27 @@ AMREX_INLINE void init_1d()
     Real entropy;
 
     // integrate up
-  
-    for (int i = index_base+1; i < nx; ++i) {
+
+    for (int i = index_base+1; i < problem_rp::nx; ++i) {
 
         Real delx = xzn_hse(i) - xzn_hse(i-1);
 
         // compute the gravitation acceleration at the lower edge
-     
+
         Real g_zone;
-        if (do_invsq_grav == 1) {
-            g_zone = -C::Gconst * M_enclosed / std::pow(xznl_hse(i), 2);
+        if (problem_rp::do_invsq_grav == 1) {
+            g_zone = -C::Gconst * problem_rp::M_enclosed / std::pow(xznl_hse(i), 2);
         } else {
-            g_zone = g_const;
+            g_zone = problem_rp::g_const;
         }
 
         // we've already set initial guesses for density, temperature, and
         // composition
-     
-        dens_zone = model_hse(i, idens);
-        temp_zone = model_hse(i, itemp);
+
+        dens_zone = model_hse(i, model::idens);
+        temp_zone = model_hse(i, model::itemp);
         for (int n = 0; n < NumSpec; ++n) {
-            xn[n] = model_hse(i, ispec+n);
+            xn[n] = model_hse(i, model::ispec+n);
         }
 
         // iteration loop
@@ -389,9 +336,9 @@ AMREX_INLINE void init_1d()
                     // addition to the density.
 
                     // HSE differencing
-              
-                    p_want = model_hse(i-1, ipres) +
-                        delx * 0.5_rt * (dens_zone + model_hse(i-1, idens)) * g_zone;
+
+                    p_want = model_hse(i-1, model::ipres) +
+                        delx * 0.5_rt * (dens_zone + model_hse(i-1, model::idens)) * g_zone;
 
                     // now we have two functions to zero:
                     //   A = p_want - p(rho,T)
@@ -436,9 +383,9 @@ AMREX_INLINE void init_1d()
 
                     // check if the density falls below our minimum cut-off --
                     // if so, floor it
-                    if (dens_zone < low_density_cutoff) {
-                        dens_zone = low_density_cutoff;
-                        temp_zone = T_lo;
+                    if (dens_zone < problem_rp::low_density_cutoff) {
+                        dens_zone = problem_rp::low_density_cutoff;
+                        temp_zone = problem_rp::T_lo;
                         converged_hse = true;
                         fluff = true;
                         break;
@@ -453,10 +400,10 @@ AMREX_INLINE void init_1d()
                 } else {
 
                     // do isothermal
-                    p_want = model_hse(i-1, ipres) +
-                        delx * 0.5_rt * (dens_zone + model_hse(i-1, idens)) * g_zone;
+                    p_want = model_hse(i-1, model::ipres) +
+                        delx * 0.5_rt * (dens_zone + model_hse(i-1, model::idens)) * g_zone;
 
-                    temp_zone = T_lo;
+                    temp_zone = problem_rp::T_lo;
 
                     // (t, rho) -> (p)
                     eos_state.T = temp_zone;
@@ -482,9 +429,9 @@ AMREX_INLINE void init_1d()
                         break;
                     }
 
-                    if (dens_zone < low_density_cutoff) {
-                        dens_zone = low_density_cutoff;
-                        temp_zone = T_lo;
+                    if (dens_zone < problem_rp::low_density_cutoff) {
+                        dens_zone = problem_rp::low_density_cutoff;
+                        temp_zone = problem_rp::T_lo;
                         converged_hse = true;
                         fluff = true;
                         break;
@@ -492,8 +439,8 @@ AMREX_INLINE void init_1d()
 
                 }
 
-                if (temp_zone < T_lo) {
-                    temp_zone = T_lo;
+                if (temp_zone < problem_rp::T_lo) {
+                    temp_zone = problem_rp::T_lo;
                     isentropic = false;
                 }
 
@@ -510,14 +457,14 @@ AMREX_INLINE void init_1d()
             }
 
         } else {
-            dens_zone = low_density_cutoff;
-            temp_zone = T_lo;
+            dens_zone = problem_rp::low_density_cutoff;
+            temp_zone = problem_rp::T_lo;
         }
 
 
         // call the EOS one more time for this zone and then go on to the next
         // (t, rho) -> (p)
-     
+
         eos_state.T = temp_zone;
         eos_state.rho = dens_zone;
         for (int n = 0; n < NumSpec; ++n) {
@@ -529,19 +476,19 @@ AMREX_INLINE void init_1d()
         pres_zone = eos_state.p;
 
         // update the thermodynamics in this zone
-        model_hse(i, idens) = dens_zone;
-        model_hse(i, itemp) = temp_zone;
-        model_hse(i, ipres) = pres_zone;
+        model_hse(i, model::idens) = dens_zone;
+        model_hse(i, model::itemp) = temp_zone;
+        model_hse(i, model::ipres) = pres_zone;
 
         // to make this process converge faster, set the density in the
         // next zone to the density in this zone
-        // model_hse(i+1,idens) = dens_zone
+        // model_hse(i+1, model::idens) = dens_zone
 
     }
 
 
     // integrate down -- using the temperature profile defined above
-  
+
     for (int i = index_base-1; i >= 0; --i) {
 
         Real delx = xzn_hse(i+1) - xzn_hse(i);
@@ -549,21 +496,21 @@ AMREX_INLINE void init_1d()
         // compute the gravitation acceleration at the upper edge
 
         Real g_zone;
-        if (do_invsq_grav == 1) {
-            g_zone = -C::Gconst * M_enclosed / std::pow(xznr_hse(i), 2);
+        if (problem_rp::do_invsq_grav == 1) {
+            g_zone = -C::Gconst * problem_rp::M_enclosed / std::pow(xznr_hse(i), 2);
         } else {
-            g_zone = g_const;
+            g_zone = problem_rp::g_const;
         }
 
         // we already set the temperature and composition profiles
-        temp_zone = model_hse(i, itemp);
+        temp_zone = model_hse(i, model::itemp);
         for (int n = 0; n < NumSpec; ++n) {
-            xn[n] = model_hse(i, ispec+n);
+            xn[n] = model_hse(i, model::ispec+n);
         }
 
         // use our previous initial guess for density
-     
-        dens_zone = model_hse(i+1, idens);
+
+        dens_zone = model_hse(i+1, model::idens);
 
 
         // iteration loop
@@ -580,9 +527,9 @@ AMREX_INLINE void init_1d()
             // find the density and pressure that are consistent
 
             // HSE differencing
-        
-            p_want = model_hse(i+1, ipres) -
-                delx * 0.5_rt * (dens_zone + model_hse(i+1, idens)) * g_zone;
+
+            p_want = model_hse(i+1, model::ipres) -
+                delx * 0.5_rt * (dens_zone + model_hse(i+1, model::idens)) * g_zone;
 
             // we will take the temperature already defined in model_hse
             // so we only need to zero:
@@ -638,24 +585,25 @@ AMREX_INLINE void init_1d()
         pres_zone = eos_state.p;
 
         // update the thermodynamics in this zone
-        model_hse(i, idens) = dens_zone;
-        model_hse(i, itemp) = temp_zone;
-        model_hse(i, ipres) = pres_zone;
+        model_hse(i, model::idens) = dens_zone;
+        model_hse(i, model::itemp) = temp_zone;
+        model_hse(i, model::ipres) = pres_zone;
 
     }
 
-    
-    auto deltastr = num_to_unitstring(delta);
+
+    auto deltastr = num_to_unitstring(problem_rp::delta);
+    Real dCoord = xzn_hse(1) - xzn_hse(0);
     auto dxstr = num_to_unitstring(dCoord);
 
-    std::string outfile = model_prefix + ".hse.tanh.delta_" + deltastr + ".dx_" + dxstr;
+    std::string outfile = problem_rp::model_prefix + ".hse.tanh.delta_" + deltastr + ".dx_" + dxstr;
     std::string outfile2 = outfile + ".extras";
 
     std::ofstream of(outfile);
     std::ofstream of2(outfile2);
 
-    of << "# npts = " << nx << std::endl;
-    of << "# num of variables = " << nvar << std::endl;
+    of << "# npts = " << problem_rp::nx << std::endl;
+    of << "# num of variables = " << 3 + NumSpec << std::endl;
     of << "# density" << std::endl;
     of << "# temperature" << std::endl;
     of << "# pressure" << std::endl;
@@ -664,13 +612,13 @@ AMREX_INLINE void init_1d()
         of << "# " << spec_names_cxx[n] << std::endl;
     }
 
-    for (int i = 0; i < nx; ++i) {
+    for (int i = 0; i < problem_rp::nx; ++i) {
         of << std::setprecision(12) << std::setw(20) << xzn_hse(i) << " ";
-        of << std::setprecision(12) << std::setw(20) << model_hse(i, idens) << " ";
-        of << std::setprecision(12) << std::setw(20) << model_hse(i, itemp) << " ";
-        of << std::setprecision(12) << std::setw(20) << model_hse(i, ipres) << " ";
+        of << std::setprecision(12) << std::setw(20) << model_hse(i, model::idens) << " ";
+        of << std::setprecision(12) << std::setw(20) << model_hse(i, model::itemp) << " ";
+        of << std::setprecision(12) << std::setw(20) << model_hse(i, model::ipres) << " ";
         for (int n = 0; n < NumSpec; ++n) {
-            of << std::setprecision(12) << std::setw(20) << model_hse(i, ispec+n) << " ";
+            of << std::setprecision(12) << std::setw(20) << model_hse(i, model::ispec+n) << " ";
         }
         of << std::endl;
     }
@@ -683,50 +631,50 @@ AMREX_INLINE void init_1d()
 
     // extras file
 
-    of2 << "# npts = " << nx << std::endl;
+    of2 << "# npts = " << problem_rp::nx << std::endl;
     of2 << "# num of variables = " << 2 << std::endl;
     of2 << "# entropy" << std::endl;
     of2 << "# c_s" << std::endl;
 
-    for (int i = 0; i < nx; ++i) {
-        eos_state.rho = model_hse(i, idens);
-        eos_state.T = model_hse(i, itemp);
+    for (int i = 0; i < problem_rp::nx; ++i) {
+        eos_state.rho = model_hse(i, model::idens);
+        eos_state.T = model_hse(i, model::itemp);
         for (int n = 0; n < NumSpec; ++n) {
-            eos_state.xn[n] = model_hse(i, ispec+n);
+            eos_state.xn[n] = model_hse(i, model::ispec+n);
         }
 
         eos(eos_input_rt, eos_state);
 
         of2 << std::setprecision(12) << std::setw(20) << xzn_hse(i) << std::endl;
         of2 << std::setprecision(12) << std::setw(20) << eos_state.s << std::endl;
-        of2 << std::setprecision(12) << std::setw(20) << eos_state.cs << std::endl;                
+        of2 << std::setprecision(12) << std::setw(20) << eos_state.cs << std::endl;
     }
 
     // compute the maximum HSE error
-  
+
     Real max_hse_error = -1.e30;
 
-    for (int i = 1; i < nx-1; ++i) {
+    for (int i = 1; i < problem_rp::nx-1; ++i) {
 
         Real delx = xzn_hse(i) - xzn_hse(i-1);
 
         // compute the gravitation acceleration at the lower edge
-     
+
         Real g_zone;
-        if (do_invsq_grav == 1) {
-            g_zone = -C::Gconst * M_enclosed / std::pow(xznl_hse(i), 2);
+        if (problem_rp::do_invsq_grav == 1) {
+            g_zone = -C::Gconst * problem_rp::M_enclosed / std::pow(xznl_hse(i), 2);
         } else {
-            g_zone = g_const;
+            g_zone = problem_rp::g_const;
         }
 
-        Real dpdr = (model_hse(i, ipres) - model_hse(i-1, ipres)) / delx;
-        Real rhog = 0.5_rt * (model_hse(i, idens) + model_hse(i-1, idens)) * g_zone;
+        Real dpdr = (model_hse(i, model::ipres) - model_hse(i-1, model::ipres)) / delx;
+        Real rhog = 0.5_rt * (model_hse(i, model::idens) + model_hse(i-1, model::idens)) * g_zone;
 
-        if (dpdr != 0.0_rt && model_hse(i+1, idens) > low_density_cutoff) {
+        if (dpdr != 0.0_rt && model_hse(i+1, model::idens) > problem_rp::low_density_cutoff) {
             max_hse_error = amrex::max(max_hse_error, std::abs(dpdr - rhog) / std::abs(dpdr));
         }
     }
 
     std::cout << "maximum HSE error = " << max_hse_error << std::endl;
-  
+
 }

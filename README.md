@@ -1,4 +1,6 @@
-[![github pages](https://github.com/AMReX-Astro/initial_models/actions/workflows/gh-pages.yml/badge.svg)](https://github.com/AMReX-Astro/initial_models/actions/workflows/gh-pages.yml)
+[![github pages](https://github.com/AMReX-Astro/initial_models/actions/workflows/gh-pages.yml/badge.svg)](https://github.com/AMReX-Astro/initial_models/actions/workflows/gh-pages.yml) 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.8305500.svg)](https://doi.org/10.5281/zenodo.8305500)
+
 
 # initial_models
 
@@ -36,7 +38,7 @@ The routines are:
   * test2
 
     generate an isentropic plane-parallel atmosphere with an entropy
-    jump below to surpress convective overshoot.  This is used by the
+    jump below to suppress convective overshoot.  This is used by the
     test2 and test_convect problems.
 
 
