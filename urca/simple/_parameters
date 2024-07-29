@@ -11,6 +11,8 @@ temp_base real      6.e8
 dens_conv_zone  real -1.0
 M_conv_zone real    2.0
 
+CO_dist_type character "constant"
+CO_transition_density real 1.5e9
 urca_transition_type character "equilibrium"
 urca_transition_density real -1.0
 
@@ -19,8 +21,8 @@ temp_fluff  real      1.e7
 
 fluff_type character "continuous"
 
-c12_in    real      0.0
-o16_in    real      0.0
+c12max    real      0.4
+o16max    real      0.6
 na_ne_23  real      0.0
 
 urca_23_dens real   1.66e9
