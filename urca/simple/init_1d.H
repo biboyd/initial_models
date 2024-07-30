@@ -128,9 +128,9 @@ AMREX_INLINE void urca_equilibrium(eos_t& eos_state){
     }
 }
 
-AMREX_INLINE void composition_tanh(eos_t& eos_state, int comp_in, int comp_out, Real abundance, Real trans_density){
+AMREX_INLINE void composition_tanh(eos_t& eos_state, int comp_in, int comp_out, Real abundance, Real trans_density, Real kappa){
     // use 10/central density as normalization factor. found to work well experimentally.
-    eos_state.xn[comp_in] =  abundance / 2.0_rt * (std::tanh(100.0_rt * (eos_state.rho - trans_density)/problem_rp::dens_base) + 1.);
+    eos_state.xn[comp_in] =  abundance / 2.0_rt * (std::tanh(kappa * (eos_state.rho - trans_density)/problem_rp::dens_base) + 1.);
     eos_state.xn[comp_out] = abundance - eos_state.xn[comp_in];
 }
 
@@ -157,7 +157,7 @@ AMREX_INLINE void set_urca_composition(eos_t& eos_state, bool isentropic) {
         urca_equilibrium(eos_state);
     }
     else if (problem_rp::urca_transition_type == "tanh"){
-        composition_tanh(eos_state, ine23, ina23, problem_rp::na_ne_23, problem_rp::urca_transition_density);
+        composition_tanh(eos_state, ine23, ina23, problem_rp::na_ne_23, problem_rp::urca_transition_density, problem_rp::urca_kappa);
     }
     else if (problem_rp::urca_transition_type == "jump"){
         composition_jump(eos_state, isentropic, ine23, ina23, problem_rp::na_ne_23);
@@ -178,7 +178,7 @@ AMREX_INLINE void set_CO_composition(eos_t& eos_state){
 
         // calc the transition diff for CO
         Real diff = problem_rp::o16max + problem_rp::c12max - CO_tot;
-        composition_tanh(eos_state, io16, ic12, diff, problem_rp::CO_transition_density);
+        composition_tanh(eos_state, io16, ic12, diff, problem_rp::CO_transition_density, problem_rp::CO_kappa);
 
         // add base levels
         eos_state.xn[io16] += CO_tot - problem_rp::c12max;
