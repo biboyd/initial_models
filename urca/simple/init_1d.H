@@ -134,16 +134,35 @@ AMREX_INLINE void composition_tanh(eos_t& eos_state, int comp_in, int comp_out, 
     eos_state.xn[comp_out] = abundance - eos_state.xn[comp_in];
 }
 
-AMREX_INLINE void composition_jump(eos_t& eos_state, bool isentropic, int comp_in, int comp_out, Real abundance){
+AMREX_INLINE void composition_powerlaw(eos_t& eos_state, int comp_in, int comp_out, Real abund_in, Real abund_out, Real trans_density, Real kappa){
+    // powerlaw at transition density 
+    Real factor = std::pow((trans_density - eos_state.rho)/problem_rp::dens_base, kappa);
+    eos_state.xn[comp_in] =  abund_in * (1 - factor);
+    eos_state.xn[comp_out] = abund_out + abund_in * factor;
+}
 
-    // set comp if isentropic
-    if (isentropic){
-        eos_state.xn[comp_in] = abundance;
-        eos_state.xn[comp_out] = 0.0_rt;
-    }
-    else{
-        eos_state.xn[comp_in] = 0.0_rt;
-        eos_state.xn[comp_out] = abundance;
+
+AMREX_INLINE void composition_jump(eos_t& eos_state, bool isentropic, int comp_in, int comp_out, Real abundance, Real ratio_in){
+    if (ratio_in < 0.0_rt){
+        // set comp if isentropic
+        if (isentropic){
+            eos_state.xn[comp_in] = abundance;
+            eos_state.xn[comp_out] = 0.0_rt;
+        }
+        else{
+            eos_state.xn[comp_in] = 0.0_rt;
+            eos_state.xn[comp_out] = abundance;
+        }                                       
+    } else {
+        // set comp if isentropic
+        if (isentropic){
+            eos_state.xn[comp_in] = ratio_in * abundance / (1 + ratio_in);
+            eos_state.xn[comp_out] = abundance / (1 + ratio_in);
+        }
+        else{
+            eos_state.xn[comp_in] = 0.0_rt;
+            eos_state.xn[comp_out] = abundance;
+        }
     }
    
 }
@@ -160,21 +179,20 @@ AMREX_INLINE void set_urca_composition(eos_t& eos_state, bool isentropic) {
         composition_tanh(eos_state, ine23, ina23, problem_rp::na_ne_23, problem_rp::urca_transition_density, problem_rp::urca_kappa);
     }
     else if (problem_rp::urca_transition_type == "jump"){
-        composition_jump(eos_state, isentropic, ine23, ina23, problem_rp::na_ne_23);
+        composition_jump(eos_state, isentropic, ine23, ina23, problem_rp::na_ne_23, problem_rp::urca_ratio);
     }
 }
 
 AMREX_INLINE void set_CO_composition(eos_t& eos_state){
     int ic12  = network_spec_index("carbon-12");
     int io16  = network_spec_index("oxygen-16");
+    Real CO_tot = 1 - problem_rp::na_ne_23;
 
     if (problem_rp::CO_dist_type == "constant") {
         eos_state.xn[ic12] = problem_rp::c12max;
         eos_state.xn[io16] = problem_rp::o16max;
 
     } else if (problem_rp::CO_dist_type == "tanh") {
-
-        Real CO_tot = 1 - problem_rp::na_ne_23;
 
         // calc the transition diff for CO
         Real diff = problem_rp::o16max + problem_rp::c12max - CO_tot;
@@ -183,6 +201,19 @@ AMREX_INLINE void set_CO_composition(eos_t& eos_state){
         // add base levels
         eos_state.xn[io16] += CO_tot - problem_rp::c12max;
         eos_state.xn[ic12] += CO_tot - problem_rp::o16max;
+
+    } else if (problem_rp::CO_dist_type == "powerlaw") {
+        if (eos_state.rho > problem_rp::CO_transition_density) {
+            eos_state.xn[io16] = problem_rp::o16max;
+            eos_state.xn[ic12] = CO_tot - problem_rp::o16max;
+        } else {
+            composition_powerlaw(eos_state, io16, ic12, problem_rp::o16max, CO_tot - problem_rp::o16max, problem_rp::CO_transition_density,problem_rp::CO_kappa);
+            if (eos_state.xn[ic12] > problem_rp::c12max){
+                eos_state.xn[io16] = CO_tot - problem_rp::c12max;
+                eos_state.xn[ic12] = problem_rp::c12max;
+
+            }
+        }
     }
 }
 AMREX_INLINE void set_composition(eos_t& eos_state, bool isentropic){
