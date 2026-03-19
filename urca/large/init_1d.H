@@ -3,7 +3,6 @@
 
 #include <AMReX_Array.H>
 
-
 #include <cmath>
 #include <sstream>
 #include <network.H>
@@ -18,9 +17,7 @@
 
 using namespace amrex;
 
-
 constexpr Real TOL = 1.e-11_rt;
-
 constexpr int MAX_ITER = 1000000;
 constexpr int MAX_RETRY = 50;
 
@@ -525,14 +522,11 @@ AMREX_INLINE void iter_dens_temp(Real& dens_zone, Real& temp_zone, eos_t& eos_st
 
 
 // generate an initial model
-
 AMREX_INLINE void init_1d() {
 
 
-    // i think unnecessary. int i, j, n;
 
     // define convenient indices for the scalars
-
     const int nvar = 3 + NumSpec;
     const int idens = 0;
     const int itemp = 1;
