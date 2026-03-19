@@ -1,0 +1,60 @@
+@namespace: problem
+
+smallx    real      1.e-10
+
+xmin      real      0.0
+xmax      real      5.e8
+
+dens_base real      2.6e9
+temp_base real      6.e8
+
+dens_conv_zone  real -1.0
+M_conv_zone real    0.5
+smooth_trans_k  real 0.9
+
+CO_dist_type character "constant"
+CO_transition_density real 1.5e9
+CO_kappa real 1.e2
+
+urca21_transition_type character "equilibrium"
+urca23_transition_type character "equilibrium"
+urca25_transition_type character "equilibrium"
+
+urca21_transition_density real -1.0
+urca23_transition_density real -1.0
+urca25_transition_density real -1.0
+
+urca21_kappa real 1.e2
+urca23_kappa real 1.e2
+urca25_kappa real 1.e2
+
+urca21_ratio real -1.0
+urca23_ratio real -1.0
+urca25_ratio real -1.0
+
+low_density_cutoff real 1.e-4
+temp_fluff  real      1.e7
+
+fluff_type character "continuous"
+
+c12max    real      0.405
+o16max    real      0.576
+ne_f_21  real       3.74e-5
+na_ne_23  real      1.42e-4
+mg_na_25  real      3.84e-5
+
+Xn         real     0.0
+Xp         real     0.0
+Xhe4       real     0.0
+Xc13       real     0.00004
+Xc14       real     0.0
+Xn13       real     0.0
+Xn14       real     0.0
+Xo17       real     0.0
+Xo18       real     0.0
+Xf18       real     0.0
+Xne20      real     1.34e-4
+Xne22      real     1.37e-2
+Xmg24      real     0.0
+
+prefix      character  "spherical"

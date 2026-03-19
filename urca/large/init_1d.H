@@ -17,7 +17,6 @@
 #include <model_util.H>
 
 using namespace amrex;
-using namespace problem_rp;
 
 
 constexpr Real TOL = 1.e-11_rt;
@@ -26,24 +25,22 @@ constexpr int MAX_ITER = 1000000;
 constexpr int MAX_RETRY = 50;
 
 
-AMREX_INLINE void fopt_urca_23(eos_t& eos_state, Real& fopt, Real& r_ecap, Real& r_beta){
+AMREX_INLINE void fopt_urca(eos_t& eos_state, Real& fopt, Real& r_ecap, Real& r_beta,
+                            int& iecap, int& ibeta, Rates::NetworkRates k_ecap, Rates::NetworkRates k_beta){
     burn_t burn_state;
     rate_t rates;
-
-    int ine23 = network_spec_index("neon-23");
-    int ina23 = network_spec_index("sodium-23");
 
     composition(eos_state);
     eos_to_burn(eos_state, burn_state);
     constexpr int do_T_derivatives{0};
     evaluate_rates<do_T_derivatives, rate_t>(burn_state, rates);
 
-    r_ecap = rates.screened_rates(k_Na23_to_Ne23);
-    r_beta = rates.screened_rates(k_Ne23_to_Na23);
+    r_ecap = rates.screened_rates(k_ecap);
+    r_beta = rates.screened_rates(k_beta);
 
     // calculate e-capture and beta decay rates are in equilibrium
-    Real xr_ecap = burn_state.xn[ina23] * r_ecap;
-    Real xr_beta = burn_state.xn[ine23] * r_beta;
+    Real xr_ecap = burn_state.xn[iecap] * r_ecap;
+    Real xr_beta = burn_state.xn[ibeta] * r_beta;
 
     fopt = xr_ecap - xr_beta;
 }
@@ -77,35 +74,24 @@ AMREX_INLINE void renormalize_species(eos_t& eos_state) {
 }
 
 
-AMREX_INLINE void urca_equilibrium(eos_t& eos_state){
+AMREX_INLINE void urca_equilibrium(eos_t& eos_state, int& iecap, int& ibeta, 
+                                   Rates::NetworkRates k_ecap, Rates::NetworkRates k_beta, Real& urca_sum){
     burn_t burn_state;
     rate_t rates;
-    Real fopt;
+    Real fopt, r_ecap, r_beta;
 
-    // get the species indices
-    int ine23 = network_spec_index("neon-23");
-    int ina23 = network_spec_index("sodium-23");
-
-    eos_state.xn[ine23] = 0.5_rt * problem_rp::na_ne_23;
-    eos_state.xn[ina23] = 0.5_rt * problem_rp::na_ne_23;
-
-    // Estimate the mass fractions approximating the rates as
-    // independent of ye.
-    composition(eos_state);
-    eos_to_burn(eos_state, burn_state);
-    constexpr int do_T_derivatives{0};
-    evaluate_rates<do_T_derivatives, rate_t>(burn_state, rates);
-
-    Real r_ecap = rates.screened_rates(k_Na23_to_Ne23);
-    Real r_beta = rates.screened_rates(k_Ne23_to_Na23);
-
-    eos_state.xn[ine23] = problem_rp::na_ne_23/(1.0_rt + r_beta/r_ecap);
-    eos_state.xn[ina23] = problem_rp::na_ne_23 - eos_state.xn[ine23];
-
-    //Keep the mass fraction sum X(ne23) + X(na23) = na_ne_23
-    // Find the A=23 mass fractions such that A=23 Urca rates are in equilibrium
+    // Keep the mass fraction sum constant
+    // Find the mass fractions such that Urca rates are in equilibrium
     // Do Newton iterations approximating the rates as independent of mass fraction
-    fopt_urca_23(eos_state, fopt, r_ecap, r_beta);
+    eos_state.xn[iecap] = 0.5_rt * urca_sum;
+    eos_state.xn[ibeta] = 0.5_rt * urca_sum;
+
+    // start w/ one iteration from 50%-50%
+    fopt_urca(eos_state, fopt, r_ecap, r_beta, iecap, ibeta, k_ecap, k_beta);
+    eos_state.xn[iecap] = urca_sum/(1.0_rt + r_ecap/r_beta);
+    eos_state.xn[ibeta] = urca_sum - eos_state.xn[iecap];
+
+    fopt_urca(eos_state, fopt, r_ecap, r_beta, iecap, ibeta, k_ecap, k_beta);
 
     Real rate_equilibrium_tol = 1.0e-10;
     int max_equilibrium_iters = 10000;
@@ -113,13 +99,13 @@ AMREX_INLINE void urca_equilibrium(eos_t& eos_state){
     while (std::abs(fopt) > rate_equilibrium_tol && j < max_equilibrium_iters) {
         Real dx = -1.0_rt * fopt/(r_ecap + r_beta);
         if (fopt > 0.0_rt) {
-            eos_state.xn[ina23] = eos_state.xn[ina23] + dx;
-            eos_state.xn[ine23] = problem_rp::na_ne_23 - eos_state.xn[ina23];
-            fopt_urca_23(eos_state, fopt, r_ecap, r_beta);
+            eos_state.xn[iecap] = eos_state.xn[iecap] + dx;
+            eos_state.xn[ibeta] = urca_sum - eos_state.xn[iecap];
+            fopt_urca(eos_state, fopt, r_ecap, r_beta, iecap, ibeta, k_ecap, k_beta);
         } else {
-            eos_state.xn[ine23] = eos_state.xn[ine23] - dx;
-            eos_state.xn[ina23] = problem_rp::na_ne_23 - eos_state.xn[ine23];
-            fopt_urca_23(eos_state, fopt, r_ecap, r_beta);
+            eos_state.xn[ibeta] = eos_state.xn[ibeta] - dx;
+            eos_state.xn[iecap] = urca_sum - eos_state.xn[ibeta];
+            fopt_urca(eos_state, fopt, r_ecap, r_beta, iecap, ibeta, k_ecap, k_beta);
         }
         j++;
     }
@@ -128,6 +114,7 @@ AMREX_INLINE void urca_equilibrium(eos_t& eos_state){
         amrex::Error("species iteration did not converge!");
     }
 }
+
 
 AMREX_INLINE void composition_tanh(eos_t& eos_state, int comp_in, int comp_out, Real abundance, Real trans_density, Real kappa){
     // use 10/central density as normalization factor. found to work well experimentally.
@@ -138,18 +125,13 @@ AMREX_INLINE void composition_tanh(eos_t& eos_state, int comp_in, int comp_out, 
 AMREX_INLINE void composition_urca_tanh(eos_t& eos_state, int comp_in, int comp_out,
                                         Real abundance, Real trans_density, Real kappa,
                                         Real ratio_in, bool isentropic){
-    if (ratio_in < 0.0_rt){
-        // set comp no ratio
-        eos_state.xn[comp_in] =  abundance / 2.0_rt * (std::tanh(kappa * (eos_state.rho - trans_density)/problem_rp::dens_base) + 1.);
-        eos_state.xn[comp_out] = abundance - eos_state.xn[comp_in];
 
-    } else {
-        Real adjusted_abun = abundance * ratio_in / (1 + ratio_in);
-        eos_state.xn[comp_in] =  adjusted_abun / 2.0_rt * (std::tanh(kappa * (eos_state.rho - trans_density)/problem_rp::dens_base) + 1.);
-        eos_state.xn[comp_out] = abundance - eos_state.xn[comp_in];
-    }
+    Real adjusted_abun = abundance * ratio_in / (1 + ratio_in);
+    eos_state.xn[comp_in] =  adjusted_abun / 2.0_rt * (std::tanh(kappa * (eos_state.rho - trans_density)/problem_rp::dens_base) + 1.);
+    eos_state.xn[comp_out] = abundance - eos_state.xn[comp_in];
    
 }
+
 
 AMREX_INLINE void composition_powerlaw(eos_t& eos_state, int comp_in, int comp_out, Real abund_in, Real abund_out, Real trans_density, Real kappa){
     // powerlaw at transition density 
@@ -184,33 +166,74 @@ AMREX_INLINE void composition_jump(eos_t& eos_state, bool isentropic, int comp_i
    
 }
 
-AMREX_INLINE void set_urca_composition(eos_t& eos_state, bool isentropic) {
+AMREX_INLINE void set_urca21_composition(eos_t& eos_state, bool isentropic) {
     
-    int ine23 = network_spec_index("neon-23");
-    int ina23 = network_spec_index("sodium-23");
+    int ine21 = network_spec_index("neon-21");
+    int if21 = network_spec_index("fluorine-21");
+
     // Construct composition profiles
-    if (problem_rp::urca_transition_type == "equilibrium"){
-        urca_equilibrium(eos_state);
+    if (problem_rp::urca21_transition_type == "equilibrium"){
+        urca_equilibrium(eos_state, ine21, if21, 
+                         k_Ne21_to_F21, k_F21_to_Ne21, problem_rp::ne_f_21);
     }
-    else if (problem_rp::urca_transition_type == "tanh"){
-        // composition_tanh(eos_state, ine23, ina23, problem_rp::na_ne_23, problem_rp::urca_transition_density, problem_rp::urca_kappa);
-        composition_urca_tanh(eos_state, ine23, ina23, problem_rp::na_ne_23, 
-                         problem_rp::urca_transition_density, problem_rp::urca_kappa,
-                         problem_rp::urca_ratio, isentropic);
+    else if (problem_rp::urca21_transition_type == "tanh"){
+        composition_urca_tanh(eos_state, if21, ine21, problem_rp::ne_f_21, 
+                         problem_rp::urca21_transition_density, problem_rp::urca21_kappa,
+                         problem_rp::urca21_ratio, isentropic);
     }
-    else if (problem_rp::urca_transition_type == "jump"){
-        composition_jump(eos_state, isentropic, ine23, ina23, problem_rp::na_ne_23, problem_rp::urca_ratio);
-    }
-    else if (problem_rp::urca_transition_type == "const"){
-        eos_state.xn[ine23] = problem_rp::na_ne_23 / 0.5_rt;
-        eos_state.xn[ina23] = problem_rp::na_ne_23 / 0.5_rt;
+    else if (problem_rp::urca21_transition_type == "jump"){
+        composition_jump(eos_state, isentropic, if21, ine21, 
+                         problem_rp::ne_f_21, problem_rp::urca21_ratio);
     }
 }
 
-AMREX_INLINE void set_CO_composition(eos_t& eos_state){
+
+AMREX_INLINE void set_urca23_composition(eos_t& eos_state, bool isentropic) {
+    
+    int ina23 = network_spec_index("sodium-23");
+    int ine23 = network_spec_index("neon-23");
+
+    // Construct composition profiles
+    if (problem_rp::urca23_transition_type == "equilibrium"){
+        urca_equilibrium(eos_state, ina23, ine23, 
+                         k_Na23_to_Ne23, k_Ne23_to_Na23, problem_rp::na_ne_23);
+    }
+    else if (problem_rp::urca23_transition_type == "tanh"){
+        composition_urca_tanh(eos_state, ine23, ina23, problem_rp::na_ne_23, 
+                         problem_rp::urca23_transition_density, problem_rp::urca23_kappa,
+                         problem_rp::urca23_ratio, isentropic);
+    }
+    else if (problem_rp::urca23_transition_type == "jump"){
+        composition_jump(eos_state, isentropic, ine23, ina23, 
+                         problem_rp::na_ne_23, problem_rp::urca23_ratio);
+    }
+}
+
+AMREX_INLINE void set_urca25_composition(eos_t& eos_state, bool isentropic) {
+    
+    int img25 = network_spec_index("magnesium-25");
+    int ina25 = network_spec_index("sodium-25");
+
+    // Construct composition profiles
+    if (problem_rp::urca25_transition_type == "equilibrium"){
+        urca_equilibrium(eos_state, img25, ina25, 
+                         k_Mg25_to_Na25, k_Na25_to_Mg25, problem_rp::mg_na_25);
+    }
+    else if (problem_rp::urca25_transition_type == "tanh"){
+        composition_urca_tanh(eos_state, ina25, img25, problem_rp::mg_na_25, 
+                         problem_rp::urca25_transition_density, problem_rp::urca25_kappa,
+                         problem_rp::urca25_ratio, isentropic);
+    }
+    else if (problem_rp::urca25_transition_type == "jump"){
+        composition_jump(eos_state, isentropic, ina25, img25, 
+                         problem_rp::mg_na_25, problem_rp::urca25_ratio);
+    }
+}
+
+
+AMREX_INLINE void set_CO_composition(eos_t& eos_state, Real& CO_tot){
     int ic12  = network_spec_index("carbon-12");
     int io16  = network_spec_index("oxygen-16");
-    Real CO_tot = 1 - problem_rp::na_ne_23;
 
     if (problem_rp::CO_dist_type == "constant") {
         eos_state.xn[ic12] = problem_rp::c12max;
@@ -240,15 +263,59 @@ AMREX_INLINE void set_CO_composition(eos_t& eos_state){
         }
     }
 }
+
+AMREX_INLINE void set_const_composition(eos_t& eos_state){
+    int jn    = network_spec_index("neutron");
+    int jp    = network_spec_index("hydrogen-1");
+    int jhe4  = network_spec_index("helium-4");
+    int jc13  = network_spec_index("carbon-13");
+    int jc14  = network_spec_index("carbon-14");
+    int jn13  = network_spec_index("nitrogen-13");
+    int jn14  = network_spec_index("nitrogen-14");
+    int jo17  = network_spec_index("oxygen-17");
+    int jo18  = network_spec_index("oxygen-18");
+    int jf18  = network_spec_index("fluorine-18");
+    int jne20 = network_spec_index("neon-20");
+    int jne22 = network_spec_index("neon-22");
+    int jmg24 = network_spec_index("magnesium-24");
+
+    eos_state.xn[jn]    = problem_rp::Xn;
+    eos_state.xn[jp]    = problem_rp::Xp;
+    eos_state.xn[jhe4]  = problem_rp::Xhe4;
+    eos_state.xn[jc13]  = problem_rp::Xc13;
+    eos_state.xn[jc14]  = problem_rp::Xc14;
+    eos_state.xn[jn13]  = problem_rp::Xn13;
+    eos_state.xn[jn14]  = problem_rp::Xn14;
+    eos_state.xn[jo17]  = problem_rp::Xo17;
+    eos_state.xn[jo18]  = problem_rp::Xo18;
+    eos_state.xn[jf18]  = problem_rp::Xf18;
+    eos_state.xn[jne20] = problem_rp::Xne20;
+    eos_state.xn[jne22] = problem_rp::Xne22;
+    eos_state.xn[jmg24] = problem_rp::Xmg24;
+}
+
 AMREX_INLINE void set_composition(eos_t& eos_state, bool isentropic){
     // Initialize mass fractions as zero
     for (int i=0; i < NumSpec; ++i){
         eos_state.xn[i] = 0.0_rt;
     }
 
+    // set the constant composition
+    set_const_composition(eos_state);
+
     // set C, O and Urca
-    set_CO_composition(eos_state);
-    set_urca_composition(eos_state, isentropic);
+    Real CO_tot = 1.0_rt;
+    for (int i=0; i < NumSpec; ++i){
+        CO_tot -= eos_state.xn[i];
+    }
+    CO_tot -= problem_rp::ne_f_21;
+    CO_tot -= problem_rp::na_ne_23;
+    CO_tot -= problem_rp::mg_na_25;
+
+    set_CO_composition(eos_state, CO_tot);
+    set_urca21_composition(eos_state, isentropic);
+    set_urca23_composition(eos_state, isentropic);
+    set_urca25_composition(eos_state, isentropic);
         
     // Floor species so abundances below 1E-30 are 0.0d0
     floor_species(eos_state);
@@ -273,10 +340,10 @@ AMREX_INLINE void get_fluff_temperature(Real& temp, Real temp_previous){
 }
 
 
-AMREX_INLINE void iter_dens_temp(Real& dens_zone, Real& temp_zone, const eos_t& eos_state_inwards,
-                          Real g_zone, Real delx, const Real& prev_dT, Real tol, Real dtol_fac,
-                          bool& isentropic, bool& isothermal, bool test_hse_convergence, bool& converged_hse, bool fluff,
-                          int& i_fluff, int& i_conv, int izone){
+AMREX_INLINE void iter_dens_temp(Real& dens_zone, Real& temp_zone, eos_t& eos_state_inwards,
+                          Real g_zone, Real delx, Real& prev_dT, Real tol, Real dtol_fac,
+                          bool& isentropic, bool test_hse_convergence, bool& converged_hse, bool fluff,
+                          int& i_fluff, int& i_isotherm, int& i_conv, int izone){
 
     Real dtemp, drho, dpd;
     eos_t eos_state;
@@ -338,90 +405,59 @@ AMREX_INLINE void iter_dens_temp(Real& dens_zone, Real& temp_zone, const eos_t& 
 
             converged_hse = true;
             fluff = true;
-            isothermal = true;
             return;
         }
 
         if (dens_zone < problem_rp::dens_conv_zone && isentropic){
             i_conv = izone;
             isentropic = false;
-            isothermal = true;
         }
 
-    } else if (isothermal) {
-        // do isothermal
-        Real p_want = eos_state_inwards.p +
-            delx*0.5_rt*(dens_zone + eos_state_inwards.rho)*g_zone;
+        if (test_hse_convergence){
+            // Check to see if HSE is satisfied to relative tolerance TOL
 
-        temp_zone = eos_state_inwards.T;
+            // Call EOS again using the new values of dens_zone and temp_zone
+            // to get pres_zone ...
+            eos_state.T     = temp_zone;
+            eos_state.rho   = dens_zone;
+            set_composition(eos_state, isentropic);
 
+            // (t, rho) -> (p, s)
+            eos(eos_input_rt, eos_state);
 
-        eos_state.T     = temp_zone;
-        eos_state.rho   = dens_zone;
-        set_composition(eos_state, isentropic);
+            pres_zone = eos_state.p;
 
-        // (t, rho) -> (p, s)
-        eos(eos_input_rt, eos_state);
+            // Compute dpdr
+            Real dpdr = (pres_zone - eos_state_inwards.p)/delx;
 
-        Real pres_zone = eos_state.p;
+            // Compute rho*g
+            Real rhog = 0.5_rt*(dens_zone + eos_state_inwards.rho)*g_zone;
 
-        dpd = eos_state.dpdr;
-
-        drho = (p_want - pres_zone)/(dpd - 0.5_rt*delx*g_zone);
-
-        dens_zone = amrex::max(0.9_rt*dens_zone,
-            amrex::min(dens_zone + drho, 1.1_rt*dens_zone));
-
-        if (dens_zone < problem_rp::low_density_cutoff) {
-            i_fluff = izone;
-
-            dens_zone = problem_rp::low_density_cutoff;
-
-            Real temp_before_fluff = eos_state_inwards.T;
-
-            get_fluff_temperature(temp_zone, temp_before_fluff);
-
-            converged_hse = true;
-            fluff = true;
-            return;
-        }
-
-    // transition from isentropic to isothermal smoothly. 
-    } else {
-        temp_zone = eos_state_inwards.T;
-
-        // check if isothermal temp is set
-        // otherwise just smoothly transition down. 
-        if (temp_isothermal < 0.){
-            if (prev_dT > dtol_fac)
-                temp_zone -= prev_dT*problem_rp::smooth_trans_k;
-            else{
-                isothermal=true;
-                i_conv = izone;
+            if (std::abs(dpdr - rhog) < tol*std::abs(dpdr)){
+                converged_hse = true;
+                return;
             }
         } else {
-            // check if close to isothermal temp
-            Real delT_to_iso = temp_zone - temp_isothermal;
-            if (std::abs(delT_to_iso) < dtol_fac*temp_zone){
-                temp_zone = temp_isothermal;
-                isothermal = true;
-                i_conv = izone;
-            } else {
-
-                if (prev_dT * 40 < delT_to_iso)
-                    dtemp = -prev_dT *1.00;
-                else
-                    dtemp = -prev_dT *0.80;
-
-                temp_zone = amrex::max(temp_isothermal, temp_zone + dtemp);
-                //adjust temp zone by a factor of last temp grad
-                //std::cout << prev_dT << ' ';
+            // Check to see if drho is under the relative tolerance TOL
+            if (std::abs(drho) < tol*dens_zone){
+                converged_hse = true;
+                return;
             }
         }
+    } else {
+        // do isothermal
+        // transition from isentropic to isothermal smoothly. 
+        temp_zone = eos_state_inwards.T;
+        if (!fluff && prev_dT/delx > dtol_fac){
+            temp_zone -= prev_dT*problem_rp::smooth_trans_k;
+            i_isotherm = izone;
+        }
 
-        // do HSE with temperature fixed
+ 
         Real p_want = eos_state_inwards.p +
             delx*0.5_rt*(dens_zone + eos_state_inwards.rho)*g_zone;
+
+
 
         eos_state.T     = temp_zone;
         eos_state.rho   = dens_zone;
@@ -450,41 +486,39 @@ AMREX_INLINE void iter_dens_temp(Real& dens_zone, Real& temp_zone, const eos_t& 
 
             converged_hse = true;
             fluff = true;
-            isothermal = true;
             return;
         }
-    }
 
-    // test HSE convergence
-    if (test_hse_convergence){
-        // Check to see if HSE is satisfied to relative tolerance TOL
+        if (test_hse_convergence){
+            // Check to see if HSE is satisfied to relative tolerance TOL
 
-        // Call EOS again using the new values of dens_zone and temp_zone
-        // to get pres_zone ...
-        eos_state.T     = temp_zone;
-        eos_state.rho   = dens_zone;
-        set_composition(eos_state, isentropic);
+            // Call EOS again using the new values of dens_zone and temp_zone
+            // to get pres_zone ...
+            eos_state.T     = temp_zone;
+            eos_state.rho   = dens_zone;
+            set_composition(eos_state, isentropic);
 
-        // (t, rho) -> (p, s)
-        eos(eos_input_rt, eos_state);
+            // (t, rho) -> (p, s)
+            eos(eos_input_rt, eos_state);
 
-        Real pres_zone = eos_state.p;
+            pres_zone = eos_state.p;
 
-        // Compute dpdr
-        Real dpdr = (pres_zone - eos_state_inwards.p)/delx;
+            // Compute dpdr
+            Real dpdr = (pres_zone - eos_state_inwards.p)/delx;
 
-        // Compute rho*g
-        Real rhog = 0.5_rt*(dens_zone + eos_state_inwards.rho)*g_zone;
+            // Compute rho*g
+            Real rhog = 0.5_rt*(dens_zone + eos_state_inwards.rho)*g_zone;
 
-        if (std::abs(dpdr - rhog) < tol*std::abs(dpdr)){
-            converged_hse = true;
-            return;
-        }
-    } else {
-        // Check to see if drho is under the relative tolerance TOL
-        if (std::abs(drho) < tol*dens_zone){
-            converged_hse = true;
-            return;
+            if (std::abs(dpdr - rhog) < tol*std::abs(dpdr)){
+                converged_hse = true;
+                return;
+            }
+        } else {
+            // Check to see if drho is under the relative tolerance TOL
+            if (std::abs(drho) < tol*dens_zone){
+                converged_hse = true;
+                return;
+            }
         }
     }
 }
@@ -531,13 +565,18 @@ AMREX_INLINE void init_1d() {
     int ic12 = network_spec_index("carbon-12");
     int io16 = network_spec_index("oxygen-16");
 
+    int ic13 = network_spec_index("carbon-13");
+    int in13 = network_spec_index("nitrogen-13");
     int ine20 = network_spec_index("neon-20");
-    int ine23 = network_spec_index("neon-23");
+    int ine21 = network_spec_index("neon-21");
+    int if21 = network_spec_index("fluorine-21");
     int ina23 = network_spec_index("sodium-23");
-    int img23 = network_spec_index("magnesium-23");
+    int ine23 = network_spec_index("neon-23");
+    int img25 = network_spec_index("magnesium-25");
+    int ina25 = network_spec_index("sodium-25");
 
-    if (ihe4 < 0 || ic12 < 0 || io16 < 0 || ine20 < 0 ||
-        ine23 < 0 || ina23 < 0 || img23 < 0) {
+    if (ihe4 < 0 || ic12 < 0 || io16 < 0 || ic13 < 0 || in13 < 0 || ine20 < 0 ||
+        if21 < 0 || ine21 < 0 || ine23 < 0 || ina23 < 0 || img25 < 0 || ina25 < 0) {
         amrex::Error("ERROR: species not defined");
     }
 
@@ -548,13 +587,22 @@ AMREX_INLINE void init_1d() {
     } else if (problem_rp::o16max < 0.0_rt || problem_rp::o16max > 1.0_rt) {
        amrex::Error("ERROR: o16max must be between 0 and 1");
 
+    } else if (problem_rp::ne_f_21 < 0.0_rt || problem_rp::ne_f_21 > 1.0_rt) {
+       amrex::Error("ERROR: ne_f_21 must be between 0 and 1");
     } else if (problem_rp::na_ne_23 < 0.0_rt || problem_rp::na_ne_23 > 1.0_rt) {
        amrex::Error("ERROR: na_ne_23 must be between 0 and 1");
+    } else if (problem_rp::mg_na_25 < 0.0_rt || problem_rp::mg_na_25 > 1.0_rt) {
+       amrex::Error("ERROR: mg_na_25 must be between 0 and 1");
     }
 
+
     // check if using tanh urca comp that transition density is also set
-    if (problem_rp::urca_transition_type == "tanh" && problem_rp::urca_transition_density < 0.){
-        amrex::Error("ERROR: if using transition type tanh, then transition density must be set");
+    if (problem_rp::urca21_transition_type == "tanh" && problem_rp::urca21_transition_density < 0.){
+        amrex::Error("ERROR urca21 type: if using transition type tanh, then transition density must be set");
+    }else if (problem_rp::urca23_transition_type == "tanh" && problem_rp::urca23_transition_density < 0.){
+        amrex::Error("ERROR urca23 type: if using transition type tanh, then transition density must be set");
+    } else if (problem_rp::urca25_transition_type == "tanh" && problem_rp::urca25_transition_density < 0.){
+        amrex::Error("ERROR urca25 type: if using transition type tanh, then transition density must be set");
     }
 
     //Initialize the temperature interior to fluff
@@ -604,33 +652,6 @@ AMREX_INLINE void init_1d() {
         }
     }
 
-    // print out initial uniform model
-    std::ofstream init_of;
-    init_of.open("initial_model.out");
-
-    init_of << "# npts = " << problem_rp::nx << std::endl;
-    init_of << "# num init_of variables = " << nvar << std::endl;
-    init_of << "# density" << std::endl;
-    init_of << "# temperature" << std::endl;
-    init_of << "# pressure" << std::endl;
-
-    for (int n = 0; n < NumSpec; ++n) {
-        init_of << "# " << spec_names_cxx[n] << std::endl;
-    }
-
-    for (int i = 0; i < problem_rp::nx; ++i) {
-        init_of << std::setprecision(12) << std::setw(20) << xzn_hse(i) << " ";
-        init_of << std::setprecision(12) << std::setw(20) << model_hse(i, idens) << " ";
-        init_of << std::setprecision(12) << std::setw(20) << model_hse(i, itemp) << " ";
-        init_of << std::setprecision(12) << std::setw(20) << model_hse(i, ipres) << " ";
-        for (int n = 0; n < NumSpec; ++n) {
-            init_of << std::setprecision(12) << std::setw(20) << model_hse(i, ispec+n) << " ";
-        }
-        init_of << std::endl;
-    }
-
-    init_of.close();
-
     for (int i = 0; i < problem_rp::nx; ++i) {
            entropy_want(i) = eos_state.s;
     }
@@ -645,10 +666,9 @@ AMREX_INLINE void init_1d() {
     //-----------------------------------------------------------------------------
 
     bool isentropic = true;
-    bool isothermal = false;
     bool test_hse_convergence = true;
     bool fluff = false;
-    int i_conv, i_fluff;
+    int i_conv, i_isotherm, i_fluff;
     Real prev_dT;
     Real dens_zone;
     Real temp_zone;
@@ -678,6 +698,7 @@ AMREX_INLINE void init_1d() {
         // start off the Newton loop by saying that the zone has not converged
         bool converged_hse = false;
 
+        Real dpd;
         if (! fluff) {
 
 
@@ -687,8 +708,8 @@ AMREX_INLINE void init_1d() {
                 for (int iter = 0; iter < MAX_ITER; ++iter) {
                     iter_dens_temp(dens_zone, temp_zone, eos_state,
                                   g_zone, delx, prev_dT, try_tol, dtol_fac,
-                                  isentropic, isothermal, test_hse_convergence, converged_hse, fluff,
-                                  i_fluff, i_conv, i);
+                                  isentropic, test_hse_convergence, converged_hse, fluff,
+                                  i_fluff, i_isotherm, i_conv, i);
                     if (converged_hse) {
                         break;
                     }
@@ -705,7 +726,6 @@ AMREX_INLINE void init_1d() {
                     get_fluff_temperature(temp_zone, temp_before_fluff);
                 }
                 isentropic = false;
-                isothermal = true;
             }
         } else {
             dens_zone = problem_rp::low_density_cutoff;
@@ -718,6 +738,7 @@ AMREX_INLINE void init_1d() {
 
         // call the EOS one more time for this zone and then go on
         // to the next
+
         eos_state.T = temp_zone;
         eos_state.rho = dens_zone;
         set_composition(eos_state, isentropic);
@@ -726,6 +747,8 @@ AMREX_INLINE void init_1d() {
         eos(eos_input_rt, eos_state);
 
         pres_zone = eos_state.p;
+
+        dpd = eos_state.dpdr;
 
         // update the thermodynamics in this zone
 
@@ -807,11 +830,13 @@ AMREX_INLINE void init_1d() {
     std::cout << std::endl;
 
     std::cout << "total mass (Msun) = " << M_enclosed(i_fluff) / C::M_solar << std::endl;
-    std::cout << "Temperature at edge (K) = " << model_hse(0.5*(i_fluff + i_conv), itemp) << std::endl;
     std::cout << "convective zone mass (Msun) = " << M_enclosed(i_conv) / C::M_solar << std::endl;
-    std::cout << "convective zone boundary density (g/cm^3) = " << model_hse(i_conv, idens) << std::endl;
-    std::cout << "convective zone boundary radius (cm) = " << xzn_hse(i_conv) << std::endl;
+    std::cout << "convective zone boundary density (10^9 g/cm^3) = " << model_hse(i_conv, idens) / 1.e9_rt << std::endl;
+    std::cout << "convective zone boundary radius (km) = " << xzn_hse(i_conv) / 1.e5_rt << std::endl;
     std::cout << "convective zone boundary index = " << i_conv << std::endl;
-    std::cout << "Temperature outside convective zone = " << model_hse(i_conv, itemp) << std::endl;
+    std::cout << "convective zone boundary Temperature (K) = " << model_hse(i_conv, itemp) / 1.e8_rt << std::endl;
+    std::cout << "Isothermal Temperature (10^8 K) = " << model_hse(i_isotherm-2, itemp) / 1.e8_rt << std::endl;
+
+    std::cout << std::endl << "Written to: " << outfile << std::endl;
 }
 #endif

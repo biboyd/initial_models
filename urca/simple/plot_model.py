@@ -44,10 +44,12 @@ def plot_vs_x(df, x_var='radius'):
     axCO.grid()
 
     df.plot(x_var, ['neon-23', 'sodium-23'], ax=axUrca)
+    #axUrca.plot(df[x_var], df['neon-23']/df['sodium-23'], label='ne23/na23')
     axUrca.set_ylabel("Mass fraction")
     axUrca.set_title("URCA-23 Mass Fraction")
     axUrca.set_xlabel('')
     axUrca.grid()
+    axUrca.legend()
 
     # plot temperature
     df.plot(x_var, 'temperature', ax=axT)
@@ -82,8 +84,7 @@ def main(model_file):
                 "carbon-12", "oxygen-16", "neon-20", "neon-23",
                 "sodium-23", "magnesium-23"]
     # read in data 
-    model_df = pd.read_csv(model_file,header=None, skiprows=14,
-                           delim_whitespace=True)
+    model_df = pd.read_csv(model_file,header=None, skiprows=14, sep='\\s+')
     model_df.columns=myheader
 
     # calc mass enclosed
@@ -97,6 +98,8 @@ def main(model_file):
     # save
     fig_rad.savefig(f"plots_{model_file}_radius.png")
     fig_mass.savefig(f"plots_{model_file}_mass.png")
+    print(f"plots_{model_file}_radius.png")
+    print(f"plots_{model_file}_mass.png")
 
 
 if __name__ == "__main__":

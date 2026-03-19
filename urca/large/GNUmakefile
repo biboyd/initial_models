@@ -13,7 +13,7 @@ USE_REACT = TRUE
 
 BL_NO_FORT = TRUE
 
-MAX_ZONES := 8192
+MAX_ZONES := 14096
 
 DEFINES += -DNPTS_MODEL=$(MAX_ZONES)
 SDC    :=
@@ -23,7 +23,7 @@ EBASE := initialmodel
 EOS_DIR := helmholtz
 
 NETWORK_TOP_DIR := $(MICROPHYSICS_HOME)/networks
-NETWORK_DIR := ignition_reaclib/URCA-simple
+NETWORK_DIR := ignition_reaclib/URCA-large
 
 Bpack := ./Make.package
 Blocs := . ../..

@@ -86,6 +86,11 @@ AMREX_INLINE void urca_equilibrium(eos_t& eos_state, int& iecap, int& ibeta,
     eos_state.xn[iecap] = 0.5_rt * urca_sum;
     eos_state.xn[ibeta] = 0.5_rt * urca_sum;
 
+    // start w/ one iteration from 50%-50%
+    fopt_urca(eos_state, fopt, r_ecap, r_beta, iecap, ibeta, k_ecap, k_beta);
+    eos_state.xn[iecap] = urca_sum/(1.0_rt + r_ecap/r_beta);
+    eos_state.xn[ibeta] = urca_sum - eos_state.xn[iecap];
+
     fopt_urca(eos_state, fopt, r_ecap, r_beta, iecap, ibeta, k_ecap, k_beta);
 
     Real rate_equilibrium_tol = 1.0e-10;
